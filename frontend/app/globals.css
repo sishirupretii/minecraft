@@ -90,28 +90,80 @@ canvas {
   transform: translateY(-3px);
 }
 
+/* Modern 4-dot crosshair: 4 small Base-blue dots arranged in a diamond
+   around a 1px center dot. Crisper and less in-your-face than a plus sign. */
 .crosshair {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   pointer-events: none;
 }
-.crosshair::before,
-.crosshair::after {
+.crosshair::before {
+  /* Center dot */
   content: '';
   position: absolute;
-  background: rgba(255,255,255,0.9);
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 2px;
+  background: #ffffff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
 }
-.crosshair::before {
-  left: 50%; top: 0;
-  width: 2px; height: 100%;
-  transform: translateX(-50%);
+.crosshair-dot {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: #4a7cff;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(74, 124, 255, 0.8);
 }
-.crosshair::after {
-  top: 50%; left: 0;
-  width: 100%; height: 2px;
-  transform: translateY(-50%);
+.crosshair-dot.top { top: 0; left: 50%; transform: translateX(-50%); }
+.crosshair-dot.bottom { bottom: 0; left: 50%; transform: translateX(-50%); }
+.crosshair-dot.left { left: 0; top: 50%; transform: translateY(-50%); }
+.crosshair-dot.right { right: 0; top: 50%; transform: translateY(-50%); }
+
+/* HUD pills */
+.hud-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(74, 124, 255, 0.35);
+  backdrop-filter: blur(6px);
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.hud-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #30e000;
+  box-shadow: 0 0 6px rgba(48, 224, 0, 0.8);
+  animation: hud-pulse 1.8s ease-in-out infinite;
+}
+@keyframes hud-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Login screen parallax dots */
+.login-dot {
+  position: absolute;
+  background: rgba(74, 124, 255, 0.5);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: login-drift 24s linear infinite;
+}
+@keyframes login-drift {
+  0% { transform: translate(0, 0); opacity: 0; }
+  10% { opacity: 0.8; }
+  90% { opacity: 0.8; }
+  100% { transform: translate(40px, -60px); opacity: 0; }
 }

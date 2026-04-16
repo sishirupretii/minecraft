@@ -18,6 +18,32 @@ interface PerTypeMesh {
 
 const INITIAL_CAPACITY = 40000;
 
+// Physically-based material params per block type. Standard materials give us
+// real shading under the sun + rim light, instead of flat plastic look.
+const MATERIAL_PARAMS: Record<BlockType, { roughness: number; metalness: number }> = {
+  base_blue:   { roughness: 0.55, metalness: 0.12 }, // grass-equivalent — signature Base blue
+  deep_blue:   { roughness: 0.5,  metalness: 0.18 }, // stone-equivalent, subtle sheen
+  ice_stone:   { roughness: 0.3,  metalness: 0.25 }, // icy / crystalline
+  cyan_wood:   { roughness: 0.75, metalness: 0.05 }, // wood — rougher
+  sand_blue:   { roughness: 0.92, metalness: 0.02 }, // dirt/sand-equivalent
+  royal_brick: { roughness: 0.7,  metalness: 0.08 }, // brick
+};
+
+// Deterministic per-position color jitter. Same block at same coord always
+// gets the same shade, so the world looks consistent across reloads but
+// each individual block is slightly unique — kills the "copy-pasted cube"
+// look without adding textures.
+const _hashColor = new THREE.Color();
+const _hashHSL = { h: 0, s: 0, l: 0 };
+function hashColor(baseHex: number, x: number, y: number, z: number, out: THREE.Color): THREE.Color {
+  const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  const jitter = (h - Math.floor(h) - 0.5) * 0.08; // ±4% lightness
+  _hashColor.setHex(baseHex);
+  _hashColor.getHSL(_hashHSL);
+  out.setHSL(_hashHSL.h, _hashHSL.s, Math.max(0, Math.min(1, _hashHSL.l + jitter)));
+  return out;
+}
+
 export class WorldRenderer {
   public group = new THREE.Group();
   private meshes: Map<BlockType, PerTypeMesh> = new Map();
@@ -28,7 +54,12 @@ export class WorldRenderer {
   private tmpQuat = new THREE.Quaternion();
   private tmpScale = new THREE.Vector3(1, 1, 1);
   private tmpScaleZero = new THREE.Vector3(0, 0, 0);
+  private tmpColor = new THREE.Color();
   private animating: Map<string, { start: number; dur: number; dir: 1 | -1; index: number; type: BlockType }> = new Map();
+
+  // Callback fires after a block is removed, so Game can spawn break particles
+  // without this file needing to know about the particle system.
+  public onBlockBroken: ((x: number, y: number, z: number, type: BlockType) => void) | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -38,17 +69,31 @@ export class WorldRenderer {
 
     for (const type of BLOCK_TYPES) {
       const meta = BLOCKS[type];
-      const material = new THREE.MeshLambertMaterial({
-        color: meta.color,
+      const params = MATERIAL_PARAMS[type] ?? { roughness: 0.8, metalness: 0 };
+      // MeshStandardMaterial receives light from our new lighting rig.
+      // InstancedMesh multiplies the material colour by the per-instance
+      // colour set with setColorAt, so we leave material.color white.
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: params.roughness,
+        metalness: params.metalness,
       });
-      // Slightly cooler look on the top face via vertex colors baked in: use darker tint
       const mesh = new THREE.InstancedMesh(geometry, material, INITIAL_CAPACITY);
       mesh.count = 0;
-      mesh.castShadow = false;
-      mesh.receiveShadow = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       mesh.frustumCulled = true;
       mesh.name = `blocks-${type}`;
-      (mesh as any).userData = { blockType: type };
+      (mesh as any).userData = { blockType: type, baseColor: meta.color };
+
+      // Pre-allocate instance color attribute so setColorAt works from the
+      // very first call. Without this Three.js would allocate on demand.
+      const colorAttr = new THREE.InstancedBufferAttribute(
+        new Float32Array(INITIAL_CAPACITY * 3),
+        3,
+      );
+      mesh.instanceColor = colorAttr;
+
       this.group.add(mesh);
 
       this.meshes.set(type, {
@@ -87,7 +132,6 @@ export class WorldRenderer {
       idx = per.count;
       per.count++;
       if (per.count > per.capacity) {
-        // Grow: allocate a new mesh with doubled capacity. Rare but handled.
         this.growMesh(type);
       }
       per.mesh.count = per.count;
@@ -102,10 +146,17 @@ export class WorldRenderer {
     per.mesh.setMatrixAt(idx, this.tmpMat);
     per.mesh.instanceMatrix.needsUpdate = true;
 
+    // Per-instance colour jitter — each block gets a deterministic subtle
+    // variant of its base colour. Dramatic improvement over flat cubes.
+    const baseColor = BLOCKS[type].color;
+    hashColor(baseColor, x, y, z, this.tmpColor);
+    per.mesh.setColorAt(idx, this.tmpColor);
+    if (per.mesh.instanceColor) per.mesh.instanceColor.needsUpdate = true;
+
     if (animate) {
       this.animating.set(k, {
         start: performance.now(),
-        dur: 100,
+        dur: 180, // slightly longer for a juicier pop-in
         dir: 1,
         index: idx,
         type,
@@ -120,15 +171,19 @@ export class WorldRenderer {
     const per = this.meshes.get(rec.type);
     if (!per) return;
 
+    // Notify listeners (particle system) BEFORE we lose the type info.
+    if (this.onBlockBroken) {
+      this.onBlockBroken(x, y, z, rec.type);
+    }
+
     if (animate) {
       this.animating.set(k, {
         start: performance.now(),
-        dur: 100,
+        dur: 120,
         dir: -1,
         index: rec.index,
         type: rec.type,
       });
-      // Keep record until animation finishes? Simpler: mark removed now, animate hides.
       this.blockMap.delete(k);
       per.indexToKey.delete(rec.index);
       per.freeIndices.push(rec.index);
@@ -156,8 +211,9 @@ export class WorldRenderer {
         continue;
       }
       const t = Math.min(1, (now - anim.start) / anim.dur);
-      const scale = anim.dir === 1 ? t : 1 - t;
-      // Decode position from key
+      // Ease-out cubic for pop-in / pop-out feel
+      const eased = anim.dir === 1 ? 1 - Math.pow(1 - t, 3) : Math.pow(1 - t, 2);
+      const scale = anim.dir === 1 ? 0.85 + eased * 0.15 : eased; // place: 0.85→1; break: 1→0
       const [sx, sy, sz] = k.split(',').map((n) => parseFloat(n));
       this.tmpPos.set(sx + 0.5, sy + 0.5, sz + 0.5);
       this.tmpScale.set(scale, scale, scale);
@@ -187,25 +243,38 @@ export class WorldRenderer {
 
     const nmesh = new THREE.InstancedMesh(geom, mat, newCap);
     nmesh.count = per.count;
+    nmesh.castShadow = true;
+    nmesh.receiveShadow = true;
     nmesh.frustumCulled = true;
     nmesh.name = `blocks-${type}`;
-    (nmesh as any).userData = { blockType: type };
+    (nmesh as any).userData = { blockType: type, baseColor: meta.color };
 
-    // Copy existing matrices
+    // Re-allocate instance color attribute at the new capacity
+    const newColorAttr = new THREE.InstancedBufferAttribute(
+      new Float32Array(newCap * 3),
+      3,
+    );
+    nmesh.instanceColor = newColorAttr;
+
+    // Copy existing matrices + colors
     const m = new THREE.Matrix4();
+    const c = new THREE.Color();
     for (let i = 0; i < per.count; i++) {
       per.mesh.getMatrixAt(i, m);
       nmesh.setMatrixAt(i, m);
+      if (per.mesh.instanceColor) {
+        (per.mesh as any).getColorAt(i, c);
+        nmesh.setColorAt(i, c);
+      }
     }
     nmesh.instanceMatrix.needsUpdate = true;
+    if (nmesh.instanceColor) nmesh.instanceColor.needsUpdate = true;
 
     this.group.remove(per.mesh);
     per.mesh.dispose();
     this.group.add(nmesh);
     per.mesh = nmesh;
     per.capacity = newCap;
-
-    // Avoid unused-meta warning
     void meta;
   }
 
@@ -234,10 +303,7 @@ export class WorldRenderer {
     if (!key) return null;
     const [x, y, z] = key.split(',').map((n) => parseInt(n, 10));
 
-    // Compute normal of hit face
     const n = hit.face?.normal.clone() ?? new THREE.Vector3();
-    // Face normal is in local space; InstancedMesh has identity transform at group level
-    // Convert to world: multiply by object's world quaternion (identity here)
     return { x, y, z, normal: n };
   }
 

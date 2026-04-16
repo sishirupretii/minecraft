@@ -63,6 +63,26 @@ export default function LoginScreen({ onLogin }: Props) {
           backgroundSize: '40px 40px',
         }}
       />
+      {/* Parallax dot field — 40 slow-drifting specks for atmosphere */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {Array.from({ length: 40 }).map((_, i) => {
+          const size = 1 + Math.random() * 2;
+          return (
+            <span
+              key={i}
+              className="login-dot"
+              style={{
+                width: `${size}px`,
+                height: `${size}px`,
+                left: `${Math.random() * 100}%`,
+                top: `${Math.random() * 100}%`,
+                animationDelay: `${Math.random() * -24}s`,
+                animationDuration: `${18 + Math.random() * 16}s`,
+              }}
+            />
+          );
+        })}
+      </div>
 
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4">
         <div className="bc-panel w-full max-w-md p-8 shadow-glow">
