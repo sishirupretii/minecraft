@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { WorldRenderer } from './World';
+import { BlockType } from '@/lib/blocks';
 
 interface PlayerOptions {
   camera: THREE.PerspectiveCamera;
@@ -10,11 +11,25 @@ interface PlayerOptions {
   spawn: { x: number; y: number; z: number };
 }
 
+// Per-block-type break time in seconds. Picked to feel Minecrafty without
+// being punishing — stone is slow, dirt is fast. No tools yet so these are
+// raw bare-hand times.
+const BREAK_TIMES: Record<BlockType, number> = {
+  base_blue: 0.45,   // grass — quick
+  deep_blue: 0.35,   // dirt — quickest
+  ice_stone: 0.3,    // snow — very soft
+  cyan_wood: 1.1,    // wood — takes some effort
+  sand_blue: 0.35,   // sand — quick
+  royal_brick: 1.5,  // stone — slow by hand
+};
+
 const PLAYER_HALF_WIDTH = 0.3;
 const PLAYER_HEIGHT = 1.8;
 const EYE_HEIGHT = 1.6; // camera is 1.6m above feet
+const SNEAK_EYE_HEIGHT = 1.35; // camera drops in sneak, classic MC effect
 const WALK_SPEED = 4.5;
 const SPRINT_SPEED = 6.5;
+const SNEAK_SPEED = 1.8;
 const FLY_SPEED = 10;
 const JUMP_VELOCITY = 8.0;
 const GRAVITY = 22;
@@ -50,7 +65,19 @@ export class PlayerController {
   public onPointerLockChange: ((locked: boolean) => void) | null = null;
   public onJump: (() => void) | null = null;
   public onFootstep: (() => void) | null = null;
+  // Called every frame while actively mining a block. progress is 0..1. When
+  // progress hits 1 we fire onBreak. The HUD renderer uses this to draw the
+  // cracks overlay. (null x,y,z = stopped mining).
+  public onBreakProgress: ((x: number | null, y: number | null, z: number | null, progress: number) => void) | null = null;
   public chatOpen = false;
+
+  // --- Hold-to-break state ---
+  // While the left mouse button is down and pointer is locked, we track
+  // which block the player is aiming at and accumulate progress. If the
+  // target changes (player looks away or breaks through), progress resets.
+  private mouseDownLeft = false;
+  private breakTarget: { x: number; y: number; z: number } | null = null;
+  private breakProgress = 0;
 
   private handlers: Array<{ target: EventTarget; type: string; fn: any }> = [];
 
@@ -79,21 +106,29 @@ export class PlayerController {
         return;
       }
       if (e.button === 0) {
-        // Break
-        const hit = this.world.raycast(this.camera, 5);
-        if (hit && this.onBreak) this.onBreak(hit.x, hit.y, hit.z);
+        // Begin/continue breaking — actual fire happens in update when
+        // progress reaches the per-block break time.
+        this.mouseDownLeft = true;
       } else if (e.button === 2) {
-        // Place
+        // Place — instant, single-click (unchanged).
         const hit = this.world.raycast(this.camera, 5);
         if (hit && this.onPlace) {
           const nx = hit.x + Math.round(hit.normal.x);
           const ny = hit.y + Math.round(hit.normal.y);
           const nz = hit.z + Math.round(hit.normal.z);
-          // Prevent placing into self
           if (!this.intersectsSelf(nx, ny, nz)) {
             this.onPlace(nx, ny, nz);
           }
         }
+      }
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) {
+        this.mouseDownLeft = false;
+        this.breakTarget = null;
+        this.breakProgress = 0;
+        if (this.onBreakProgress) this.onBreakProgress(null, null, null, 0);
       }
     };
 
@@ -184,6 +219,7 @@ export class PlayerController {
     };
 
     add(this.domElement, 'mousedown', onMouseDown);
+    add(document, 'mouseup', onMouseUp);
     add(this.domElement, 'contextmenu', onContextMenu);
     add(document, 'mousemove', onMouseMove);
     add(document, 'keydown', onKeyDown);
@@ -306,8 +342,17 @@ export class PlayerController {
       if (this.keys['a']) dir.sub(right);
     }
 
-    const sprinting = !!this.keys['shift'];
-    const speed = this.flying ? FLY_SPEED : sprinting ? SPRINT_SPEED : WALK_SPEED;
+    // Ctrl = sneak. Takes precedence over shift (sprint) so holding both
+    // results in sneak — matches the intuitive "slow and careful" read.
+    const sneaking = !!this.keys['control'];
+    const sprinting = !!this.keys['shift'] && !sneaking;
+    const speed = this.flying
+      ? FLY_SPEED
+      : sneaking
+        ? SNEAK_SPEED
+        : sprinting
+          ? SPRINT_SPEED
+          : WALK_SPEED;
     dir.normalize().multiplyScalar(speed);
 
     if (this.flying) {
@@ -325,12 +370,25 @@ export class PlayerController {
     }
 
     // Attempt movement with collision + step-up
-    const dx = this.velocity.x * dt;
-    const dz = this.velocity.z * dt;
+    let dx = this.velocity.x * dt;
+    let dz = this.velocity.z * dt;
     const dy = this.velocity.y * dt;
 
     const wasGrounded = this.isGrounded;
     this.isGrounded = false;
+
+    // Sneak edge-clamp: if we're sneaking on solid ground, zero any
+    // horizontal step that would slide us over the edge. Classic Minecraft.
+    if (sneaking && wasGrounded && !this.flying) {
+      if (dx !== 0 && !this.hasGroundBelow(this.position.x + dx, this.position.z)) {
+        dx = 0;
+        this.velocity.x = 0;
+      }
+      if (dz !== 0 && !this.hasGroundBelow(this.position.x + dx, this.position.z + dz)) {
+        dz = 0;
+        this.velocity.z = 0;
+      }
+    }
 
     // Try Y first (gravity/jump)
     if (!this.flying) {
@@ -365,10 +423,11 @@ export class PlayerController {
       this.onFootstep();
     }
 
-    // Update camera
+    // Update camera. Sneak drops the eye height slightly for visual flavour.
+    const eyeH = sneaking ? SNEAK_EYE_HEIGHT : EYE_HEIGHT;
     this.camera.position.set(
       this.position.x,
-      this.position.y + EYE_HEIGHT,
+      this.position.y + eyeH,
       this.position.z,
     );
 
@@ -377,6 +436,43 @@ export class PlayerController {
       // Let Game handle via onChange; simply clamp for now
       this.position.y = 40;
       this.velocity.set(0, 0, 0);
+    }
+
+    // ---- Hold-to-break ----
+    // If the player is holding left click while pointer-locked, advance
+    // break progress against whatever block they're currently aiming at.
+    // Changing target cancels, releasing the button cancels.
+    if (this.mouseDownLeft && this.pointerLocked && !this.chatOpen) {
+      const hit = this.world.raycast(this.camera, 5);
+      if (!hit) {
+        if (this.breakTarget !== null) {
+          this.breakTarget = null;
+          this.breakProgress = 0;
+          if (this.onBreakProgress) this.onBreakProgress(null, null, null, 0);
+        }
+      } else {
+        const sameTarget =
+          this.breakTarget &&
+          this.breakTarget.x === hit.x &&
+          this.breakTarget.y === hit.y &&
+          this.breakTarget.z === hit.z;
+        if (!sameTarget) {
+          this.breakTarget = { x: hit.x, y: hit.y, z: hit.z };
+          this.breakProgress = 0;
+        }
+        const type = this.world.getType(hit.x, hit.y, hit.z);
+        const breakTime = type ? BREAK_TIMES[type] ?? 0.6 : 0.6;
+        this.breakProgress += dt / breakTime;
+        if (this.breakProgress >= 1) {
+          // Done — fire the break, reset for the next block.
+          if (this.onBreak) this.onBreak(hit.x, hit.y, hit.z);
+          this.breakTarget = null;
+          this.breakProgress = 0;
+          if (this.onBreakProgress) this.onBreakProgress(null, null, null, 0);
+        } else if (this.onBreakProgress) {
+          this.onBreakProgress(hit.x, hit.y, hit.z, this.breakProgress);
+        }
+      }
     }
 
     if (this.onChange) {
@@ -388,6 +484,27 @@ export class PlayerController {
         rotX: this.rotX,
       });
     }
+  }
+
+  /** True if there's a solid block directly below the player's AABB at (x, z). */
+  private hasGroundBelow(x: number, z: number): boolean {
+    // feet.y - 0.05 gives the block directly beneath the player's feet when
+    // standing on a surface (feet.y == blockTop → block is at floor(y) - 1).
+    const by = Math.floor(this.position.y - 0.05);
+    const minX = x - PLAYER_HALF_WIDTH;
+    const maxX = x + PLAYER_HALF_WIDTH;
+    const minZ = z - PLAYER_HALF_WIDTH;
+    const maxZ = z + PLAYER_HALF_WIDTH;
+    const bxMin = Math.floor(minX);
+    const bxMax = Math.floor(maxX - 0.0001);
+    const bzMin = Math.floor(minZ);
+    const bzMax = Math.floor(maxZ - 0.0001);
+    for (let bx = bxMin; bx <= bxMax; bx++) {
+      for (let bz = bzMin; bz <= bzMax; bz++) {
+        if (this.world.has(bx, by, bz)) return true;
+      }
+    }
+    return false;
   }
 
   private canStepUp(dx: number, dz: number): boolean {

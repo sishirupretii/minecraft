@@ -8,7 +8,8 @@ import { getAudio } from '@/lib/audio';
 import { WorldRenderer } from './World';
 import { PlayerController } from './Player';
 import { OtherPlayersManager } from './OtherPlayers';
-import { CowManager } from './Cows';
+import { CowManager, PigManager, ChickenManager } from './Mobs';
+import { FlowerManager } from './Flowers';
 import Hotbar from './Hotbar';
 import Chat, { ChatMsg } from './Chat';
 import HUD from './HUD';
@@ -323,6 +324,52 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     highlightOuter.renderOrder = 9;
     scene.add(highlightOuter);
 
+    // ---- Break-progress cracks overlay ----
+    // A single box mesh slightly larger than the target block, textured with
+    // a canvas-drawn cracks pattern. Opacity ramps 0 → 0.9 with progress.
+    const cracksTexSize = 64;
+    const cracksCanvas = document.createElement('canvas');
+    cracksCanvas.width = cracksTexSize;
+    cracksCanvas.height = cracksTexSize;
+    const cracksCtx = cracksCanvas.getContext('2d')!;
+    cracksCtx.clearRect(0, 0, cracksTexSize, cracksTexSize);
+    cracksCtx.strokeStyle = 'rgba(0,0,0,0.85)';
+    cracksCtx.lineCap = 'round';
+    cracksCtx.lineWidth = 1.5;
+    // Draw 12 jagged crack lines + small forks. Procedural so it has the
+    // hand-drawn Minecraft feel without shipping a texture asset.
+    for (let i = 0; i < 12; i++) {
+      const x1 = Math.random() * cracksTexSize;
+      const y1 = Math.random() * cracksTexSize;
+      let x = x1;
+      let y = y1;
+      let angle = Math.random() * Math.PI * 2;
+      cracksCtx.beginPath();
+      cracksCtx.moveTo(x, y);
+      const segs = 2 + Math.floor(Math.random() * 3);
+      for (let s = 0; s < segs; s++) {
+        angle += (Math.random() - 0.5) * 1.2;
+        x += Math.cos(angle) * (4 + Math.random() * 5);
+        y += Math.sin(angle) * (4 + Math.random() * 5);
+        cracksCtx.lineTo(x, y);
+      }
+      cracksCtx.stroke();
+    }
+    const cracksTex = new THREE.CanvasTexture(cracksCanvas);
+    cracksTex.needsUpdate = true;
+    const cracksMat = new THREE.MeshBasicMaterial({
+      map: cracksTex,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false,
+    });
+    const cracksGeom = new THREE.BoxGeometry(1.005, 1.005, 1.005);
+    const cracksMesh = new THREE.Mesh(cracksGeom, cracksMat);
+    cracksMesh.visible = false;
+    cracksMesh.renderOrder = 11;
+    scene.add(cracksMesh);
+
     const camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / window.innerHeight,
@@ -408,10 +455,17 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     water.receiveShadow = true;
     scene.add(water);
 
-    // World + players + cows (cows are purely local, no networking)
+    // World + players + mobs (mobs are purely local, no networking)
     const world = new WorldRenderer(scene);
     const others = new OtherPlayersManager(scene);
     const cows = new CowManager(scene, world);
+    const pigs = new PigManager(scene, world);
+    const chickens = new ChickenManager(scene, world);
+    const flowers = new FlowerManager(scene);
+    // Captured from world:init so flowers + mobs can use it in
+    // onWorldComplete. Default matches backend types.ts (WORLD_SIZE=128).
+    let worldSizeLocal = 128;
+    let worldHeightLocal = 32;
 
     // ---- Break particles ----
     type Particle = {
@@ -494,6 +548,18 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     };
     player.onJump = () => audio.playJump();
     player.onFootstep = () => audio.playFootstep();
+    // Drive the cracks overlay from the player's break-progress state. Null
+    // x/y/z means "not currently breaking", hide the overlay.
+    player.onBreakProgress = (x, y, z, p) => {
+      if (x === null || y === null || z === null) {
+        cracksMesh.visible = false;
+        cracksMat.opacity = 0;
+      } else {
+        cracksMesh.visible = true;
+        cracksMesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+        cracksMat.opacity = Math.min(0.9, p * 0.9);
+      }
+    };
 
     // ---- Socket wiring ----
     const socket = getSocket();
@@ -529,6 +595,9 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     }) => {
       world.clear();
       others.clear();
+      flowers.clear();
+      worldSizeLocal = payload.worldSize ?? worldSizeLocal;
+      worldHeightLocal = payload.worldHeight ?? worldHeightLocal;
 
       for (const b of payload.blocks) {
         world.addBlock(b.x, b.y, b.z, b.type);
@@ -558,9 +627,13 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
 
     const onWorldComplete = () => {
       setWorldLoaded(true);
-      // Spawn a small herd once the world is fully loaded so cows can
+      // Generate flowers first — iterates the whole world once.
+      flowers.generate(world, worldSizeLocal, worldHeightLocal);
+      // Spawn small herds once the world is fully loaded so mobs can
       // actually find ground to stand on.
-      cows.spawn(8, 64, 64, 32);
+      cows.spawn(6, 64, 64, 32);
+      pigs.spawn(5, 64, 64, 36);
+      chickens.spawn(7, 64, 64, 30);
     };
 
     const onPlayerJoined = (p: { id: string; username: string; color: string; x: number; y: number; z: number }) => {
@@ -736,7 +809,11 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       elapsed += dt;
       player.update(dt);
       others.update(dt);
-      cows.update(dt);
+      // Pass the camera position as "player position" so mobs know when to
+      // flee. Camera X/Z match the player feet position anyway.
+      cows.update(dt, camera.position);
+      pigs.update(dt, camera.position);
+      chickens.update(dt, camera.position);
       world.update();
 
       // ---- Day/night math ----
@@ -972,6 +1049,9 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       playerRef.current = null;
       others.clear();
       cows.clear();
+      pigs.clear();
+      chickens.clear();
+      flowers.clear();
       world.dispose();
       for (const p of particles) {
         scene.remove(p.mesh);
@@ -982,6 +1062,9 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       camera.remove(hand);
       handGeom.dispose();
       handMat.dispose();
+      cracksGeom.dispose();
+      cracksMat.dispose();
+      cracksTex.dispose();
       cloudTexture.dispose();
       cloudMat.dispose();
       cloudMesh.geometry.dispose();
@@ -1109,8 +1192,8 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
             <div className="space-y-1 text-sm text-white/80">
               <div><span className="font-mono text-[#4a7cff]">Mouse</span> — Look around</div>
               <div><span className="font-mono text-[#4a7cff]">W A S D</span> — Move</div>
-              <div><span className="font-mono text-[#4a7cff]">Space</span> — Jump &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Shift</span> — Sprint</div>
-              <div><span className="font-mono text-[#4a7cff]">Left click</span> — Break &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Right click</span> — Place</div>
+              <div><span className="font-mono text-[#4a7cff]">Space</span> — Jump &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Shift</span> — Sprint &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Ctrl</span> — Sneak</div>
+              <div><span className="font-mono text-[#4a7cff]">Hold left click</span> — Break &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Right click</span> — Place</div>
               <div><span className="font-mono text-[#4a7cff]">1-6</span> — Select block &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">F</span> — Fly</div>
               <div><span className="font-mono text-[#4a7cff]">T</span> — Chat &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Esc</span> — Release mouse</div>
             </div>
