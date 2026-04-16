@@ -36,6 +36,7 @@ export default function Game({ username, walletAddress }: Props) {
   const [totalBlocks, setTotalBlocks] = useState(0);
   const [selfColor, setSelfColor] = useState<string>('#0052FF');
   const [error, setError] = useState<string | null>(null);
+  const [pointerLocked, setPointerLocked] = useState(false);
 
   // Track refs so callbacks use fresh values without re-binding
   useEffect(() => {
@@ -102,6 +103,64 @@ export default function Game({ username, walletAddress }: Props) {
     const sky = new THREE.Mesh(skyGeom, skyMat);
     scene.add(sky);
 
+    // --- Sun (warm disc) + Moon (pale disc), parented to camera so they feel "at infinity"
+    // and never get clipped by fog. We disable fog on their materials and give them a huge
+    // renderOrder-friendly position just inside the sky sphere.
+    const celestialGroup = new THREE.Group();
+    scene.add(celestialGroup);
+
+    const sunGeom = new THREE.SphereGeometry(10, 24, 16);
+    const sunMat = new THREE.MeshBasicMaterial({
+      color: 0xfff1b8,
+      fog: false,
+      depthWrite: false,
+    });
+    const sun = new THREE.Mesh(sunGeom, sunMat);
+    sun.position.set(120, 90, -80);
+    sun.renderOrder = -1;
+    celestialGroup.add(sun);
+
+    // Sun glow (larger, transparent)
+    const sunGlowGeom = new THREE.SphereGeometry(18, 24, 16);
+    const sunGlowMat = new THREE.MeshBasicMaterial({
+      color: 0xffd873,
+      fog: false,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+    });
+    const sunGlow = new THREE.Mesh(sunGlowGeom, sunGlowMat);
+    sunGlow.position.copy(sun.position);
+    sunGlow.renderOrder = -2;
+    celestialGroup.add(sunGlow);
+
+    const moonGeom = new THREE.SphereGeometry(7, 24, 16);
+    const moonMat = new THREE.MeshBasicMaterial({
+      color: 0xe6edff,
+      fog: false,
+      depthWrite: false,
+    });
+    const moon = new THREE.Mesh(moonGeom, moonMat);
+    moon.position.set(-130, 70, 90);
+    moon.renderOrder = -1;
+    celestialGroup.add(moon);
+
+    // --- Block highlight (wireframe outline around the block you're aiming at)
+    const highlightGeom = new THREE.BoxGeometry(1.002, 1.002, 1.002);
+    const highlightEdges = new THREE.EdgesGeometry(highlightGeom);
+    const highlightMat = new THREE.LineBasicMaterial({
+      color: 0x000000,
+      linewidth: 2,
+      transparent: true,
+      opacity: 0.85,
+      fog: false,
+      depthTest: true,
+    });
+    const highlight = new THREE.LineSegments(highlightEdges, highlightMat);
+    highlight.visible = false;
+    highlight.renderOrder = 10;
+    scene.add(highlight);
+
     const camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / window.innerHeight,
@@ -159,6 +218,7 @@ export default function Game({ username, walletAddress }: Props) {
       setChatOpen(true);
       if (document.pointerLockElement === canvas) document.exitPointerLock();
     };
+    player.onPointerLockChange = (locked) => setPointerLocked(locked);
 
     // ---- Socket wiring ----
     const socket = getSocket();
@@ -313,6 +373,19 @@ export default function Game({ username, walletAddress }: Props) {
       player.update(dt);
       others.update(dt);
       world.update();
+
+      // Keep sun/moon centered on the player so they always feel "at infinity"
+      celestialGroup.position.copy(camera.position);
+
+      // Update block highlight (the block you're currently aiming at, within 5)
+      const target = world.raycast(camera, 5);
+      if (target) {
+        highlight.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
+        highlight.visible = true;
+      } else {
+        highlight.visible = false;
+      }
+
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
@@ -401,6 +474,25 @@ export default function Game({ username, walletAddress }: Props) {
       <div className="pointer-events-none absolute bottom-20 left-1/2 -translate-x-1/2 rounded bg-black/50 px-2 py-0.5 text-xs text-white/80 backdrop-blur-sm">
         {BLOCKS[BLOCK_TYPES[selectedBlock]].label}
       </div>
+
+      {/* Click-to-play overlay — shown when the mouse isn't captured.
+          Clicking the canvas itself engages pointer lock (see Player.bindEvents),
+          so this overlay is purely informational and must NOT block mouse events. */}
+      {!pointerLocked && !chatOpen && worldLoaded && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="rounded-xl border border-white/20 bg-black/60 px-8 py-6 text-center shadow-2xl">
+            <div className="mb-2 text-2xl font-bold text-white">Click to Play</div>
+            <div className="space-y-1 text-sm text-white/80">
+              <div><span className="font-mono text-[#4a7cff]">Mouse</span> — Look around</div>
+              <div><span className="font-mono text-[#4a7cff]">W A S D</span> — Move</div>
+              <div><span className="font-mono text-[#4a7cff]">Space</span> — Jump &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Shift</span> — Sprint</div>
+              <div><span className="font-mono text-[#4a7cff]">Left click</span> — Break &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Right click</span> — Place</div>
+              <div><span className="font-mono text-[#4a7cff]">1-6</span> — Select block &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">F</span> — Fly</div>
+              <div><span className="font-mono text-[#4a7cff]">T</span> — Chat &nbsp;·&nbsp; <span className="font-mono text-[#4a7cff]">Esc</span> — Release mouse</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="pointer-events-auto absolute left-1/2 top-20 -translate-x-1/2 rounded-md border border-red-400/40 bg-red-500/20 px-4 py-2 text-sm text-red-100 backdrop-blur-sm">

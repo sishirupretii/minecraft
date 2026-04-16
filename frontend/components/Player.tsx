@@ -47,6 +47,7 @@ export class PlayerController {
   public onHotbarScroll: ((delta: number) => void) | null = null;
   public onTabDown: ((pressed: boolean) => void) | null = null;
   public onToggleCoords: (() => void) | null = null;
+  public onPointerLockChange: ((locked: boolean) => void) | null = null;
   public chatOpen = false;
 
   private handlers: Array<{ target: EventTarget; type: string; fn: any }> = [];
@@ -171,6 +172,7 @@ export class PlayerController {
 
     const onPointerLockChange = () => {
       this.pointerLocked = document.pointerLockElement === this.domElement;
+      if (this.onPointerLockChange) this.onPointerLockChange(this.pointerLocked);
     };
 
     const add = (target: EventTarget, type: string, fn: any) => {
