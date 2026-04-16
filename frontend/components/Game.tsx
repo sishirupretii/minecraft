@@ -55,6 +55,22 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
   const [fps, setFps] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [invulnerable, setInvulnerable] = useState(false);
+  // Inventory — per-block-type count. Starts empty (survival-style): you
+  // have to break blocks before you can build with them.
+  const [inventory, setInventory] = useState<Record<BlockType, number>>({
+    base_blue: 0,
+    deep_blue: 0,
+    ice_stone: 0,
+    cyan_wood: 0,
+    sand_blue: 0,
+    royal_brick: 0,
+  });
+  // Ref mirrors the state so the break/place callbacks (bound once inside
+  // the big useEffect) read the freshest values without re-binding.
+  const inventoryRef = useRef<Record<BlockType, number>>(inventory);
+  useEffect(() => {
+    inventoryRef.current = inventory;
+  }, [inventory]);
 
   // Track refs so callbacks use fresh values without re-binding
   useEffect(() => {
@@ -648,12 +664,23 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       if (t) {
         audio.playBlockBreak(t);
         world.removeBlock(x, y, z, true);
+        // Collect: +1 to that type's inventory.
+        const next = { ...inventoryRef.current, [t]: (inventoryRef.current[t] ?? 0) + 1 };
+        inventoryRef.current = next;
+        setInventory(next);
       }
       socket.emit('block:break', { x, y, z });
       handSwingTime = 0;
     };
     player.onPlace = (x, y, z) => {
       const type = BLOCK_TYPES[selectedRef.current];
+      const have = inventoryRef.current[type] ?? 0;
+      // Can't place what you don't have — silently bail. The hand stays at
+      // rest (no swing) so the user gets visual "no-op" feedback.
+      if (have <= 0) return;
+      const next = { ...inventoryRef.current, [type]: have - 1 };
+      inventoryRef.current = next;
+      setInventory(next);
       audio.playBlockPlace(type);
       world.addBlock(x, y, z, type, true); // optimistic
       socket.emit('block:place', { x, y, z, type });
@@ -815,6 +842,8 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       // ---- Hand: track selected block color + run swing animation ----
       const selType = BLOCK_TYPES[selectedRef.current];
       handMat.color.setHex(BLOCKS[selType].color);
+      // Empty slot → no visible block in hand (matches Minecraft survival).
+      hand.visible = (inventoryRef.current[selType] ?? 0) > 0;
       if (handSwingTime !== Infinity) {
         handSwingTime += dt;
         const swingDur = 0.25;
@@ -1007,6 +1036,7 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
 
       <Hotbar
         selected={selectedBlock}
+        counts={inventory}
         onSelect={(i) => setSelectedBlock(i)}
       />
 
