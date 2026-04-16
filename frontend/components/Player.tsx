@@ -217,7 +217,7 @@ export class PlayerController {
   private collideAxis(axis: 'x' | 'y' | 'z', delta: number): number {
     if (delta === 0) return 0;
     const prev = this.position[axis];
-    let next = prev + delta;
+    const next = prev + delta;
 
     const minX = (axis === 'x' ? next : this.position.x) - PLAYER_HALF_WIDTH;
     const maxX = (axis === 'x' ? next : this.position.x) + PLAYER_HALF_WIDTH;
@@ -233,18 +233,24 @@ export class PlayerController {
     const bzMin = Math.floor(minZ);
     const bzMax = Math.floor(maxZ - 0.0001);
 
+    // Track the actual coordinate of the block that was hit, so we snap the
+    // player to the true block face — not to the player's AABB extent (which
+    // can teleport them far above their pre-collision position).
     let collided = false;
+    let hitMin = Infinity;   // smallest block coord (for moving in +dir)
+    let hitMax = -Infinity;  // largest block coord (for moving in -dir)
+
     for (let x = bxMin; x <= bxMax; x++) {
       for (let y = byMin; y <= byMax; y++) {
         for (let z = bzMin; z <= bzMax; z++) {
           if (this.isBlockSolid(x, y, z)) {
             collided = true;
-            break;
+            const c = axis === 'x' ? x : axis === 'y' ? y : z;
+            if (c < hitMin) hitMin = c;
+            if (c > hitMax) hitMax = c;
           }
         }
-        if (collided) break;
       }
-      if (collided) break;
     }
 
     if (!collided) {
@@ -252,23 +258,23 @@ export class PlayerController {
       return delta;
     }
 
-    // Resolve: snap to block boundary
+    // Resolve: snap to the face of the actual blocking block
     if (axis === 'y') {
       if (delta > 0) {
-        next = byMin; // hit ceiling
-        this.position.y = next - 0.0001;
+        // Hit ceiling: head just below hit block's bottom face
+        this.position.y = hitMin - PLAYER_HEIGHT - 0.0001;
       } else {
-        next = byMax + 1; // land on top
-        this.position.y = next;
+        // Landed on top: feet on top face of tallest blocking block
+        this.position.y = hitMax + 1;
         this.isGrounded = true;
       }
       this.velocity.y = 0;
     } else if (axis === 'x') {
-      if (delta > 0) this.position.x = bxMin - PLAYER_HALF_WIDTH - 0.0001;
-      else this.position.x = bxMax + 1 + PLAYER_HALF_WIDTH + 0.0001;
-    } else if (axis === 'z') {
-      if (delta > 0) this.position.z = bzMin - PLAYER_HALF_WIDTH - 0.0001;
-      else this.position.z = bzMax + 1 + PLAYER_HALF_WIDTH + 0.0001;
+      if (delta > 0) this.position.x = hitMin - PLAYER_HALF_WIDTH - 0.0001;
+      else this.position.x = hitMax + 1 + PLAYER_HALF_WIDTH + 0.0001;
+    } else {
+      if (delta > 0) this.position.z = hitMin - PLAYER_HALF_WIDTH - 0.0001;
+      else this.position.z = hitMax + 1 + PLAYER_HALF_WIDTH + 0.0001;
     }
     return 0;
   }
