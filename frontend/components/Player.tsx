@@ -48,6 +48,8 @@ export class PlayerController {
   public onTabDown: ((pressed: boolean) => void) | null = null;
   public onToggleCoords: (() => void) | null = null;
   public onPointerLockChange: ((locked: boolean) => void) | null = null;
+  public onJump: (() => void) | null = null;
+  public onFootstep: (() => void) | null = null;
   public chatOpen = false;
 
   private handlers: Array<{ target: EventTarget; type: string; fn: any }> = [];
@@ -151,6 +153,7 @@ export class PlayerController {
         } else if (this.isGrounded) {
           this.velocity.y = JUMP_VELOCITY;
           this.isGrounded = false;
+          if (this.onJump) this.onJump();
         }
       }
 
@@ -326,6 +329,7 @@ export class PlayerController {
     const dz = this.velocity.z * dt;
     const dy = this.velocity.y * dt;
 
+    const wasGrounded = this.isGrounded;
     this.isGrounded = false;
 
     // Try Y first (gravity/jump)
@@ -352,6 +356,13 @@ export class PlayerController {
         this.position.y += 1;
         this.collideAxis('z', dz);
       }
+    }
+
+    // Footstep: once grounded and horizontally moving, let audio engine
+    // rate-limit actual playback (it caps at 1 per 380 ms).
+    const horizMoving = Math.abs(this.velocity.x) + Math.abs(this.velocity.z) > 0.5;
+    if (this.isGrounded && wasGrounded && horizMoving && !this.flying && this.onFootstep) {
+      this.onFootstep();
     }
 
     // Update camera

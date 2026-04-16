@@ -2,8 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---- Theme ----
+   Menu/HUD chrome stays Base-blue (matches agentcraft.fun look and the Base
+   brand). Only the WORLD itself uses the Minecraft green/earth palette —
+   those colors live in lib/blocks.ts and don't bleed into UI. */
 :root {
   --base-blue: #0052ff;
+  --base-blue-soft: #4a7cff;
   --base-bg: #0a0e27;
 }
 
@@ -90,8 +95,7 @@ canvas {
   transform: translateY(-3px);
 }
 
-/* Modern 4-dot crosshair: 4 small Base-blue dots arranged in a diamond
-   around a 1px center dot. Crisper and less in-your-face than a plus sign. */
+/* Modern 4-dot crosshair — neutral white dots read well over grass AND snow */
 .crosshair {
   position: absolute;
   left: 50%;
@@ -102,7 +106,6 @@ canvas {
   pointer-events: none;
 }
 .crosshair::before {
-  /* Center dot */
   content: '';
   position: absolute;
   left: 50%;
@@ -112,15 +115,15 @@ canvas {
   background: #ffffff;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
 }
 .crosshair-dot {
   position: absolute;
   width: 2px;
   height: 2px;
-  background: #4a7cff;
+  background: #ffffff;
   border-radius: 50%;
-  box-shadow: 0 0 4px rgba(74, 124, 255, 0.8);
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
 }
 .crosshair-dot.top { top: 0; left: 50%; transform: translateX(-50%); }
 .crosshair-dot.bottom { bottom: 0; left: 50%; transform: translateX(-50%); }
@@ -151,6 +154,17 @@ canvas {
 @keyframes hud-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
+}
+
+/* Toast — fades in then out over ~3s */
+.toast-fade {
+  animation: toast-fade 3.2s ease-out forwards;
+}
+@keyframes toast-fade {
+  0%   { opacity: 0; transform: translate(-50%, -8px); }
+  10%  { opacity: 1; transform: translate(-50%, 0); }
+  85%  { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -4px); }
 }
 
 /* Login screen parallax dots */

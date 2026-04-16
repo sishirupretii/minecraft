@@ -21,12 +21,12 @@ const INITIAL_CAPACITY = 40000;
 // Physically-based material params per block type. Standard materials give us
 // real shading under the sun + rim light, instead of flat plastic look.
 const MATERIAL_PARAMS: Record<BlockType, { roughness: number; metalness: number }> = {
-  base_blue:   { roughness: 0.55, metalness: 0.12 }, // grass-equivalent — signature Base blue
-  deep_blue:   { roughness: 0.5,  metalness: 0.18 }, // stone-equivalent, subtle sheen
-  ice_stone:   { roughness: 0.3,  metalness: 0.25 }, // icy / crystalline
-  cyan_wood:   { roughness: 0.75, metalness: 0.05 }, // wood — rougher
-  sand_blue:   { roughness: 0.92, metalness: 0.02 }, // dirt/sand-equivalent
-  royal_brick: { roughness: 0.7,  metalness: 0.08 }, // brick
+  base_blue:   { roughness: 0.85, metalness: 0 },    // grass — matte, no sheen
+  deep_blue:   { roughness: 0.95, metalness: 0 },    // dirt — fully matte
+  ice_stone:   { roughness: 0.55, metalness: 0.05 }, // snow — subtle sparkle
+  cyan_wood:   { roughness: 0.82, metalness: 0 },    // oak wood — rough grain
+  sand_blue:   { roughness: 0.95, metalness: 0 },    // sand — dusty matte
+  royal_brick: { roughness: 0.88, metalness: 0 },    // stone — rough
 };
 
 // Deterministic per-position color jitter. Same block at same coord always

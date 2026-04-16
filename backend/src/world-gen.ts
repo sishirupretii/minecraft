@@ -13,88 +13,111 @@ function mulberry32(seed: number) {
   };
 }
 
+type Biome = 'plains' | 'desert' | 'snow';
+
+// Biome palette map. Type ids are unchanged for DB compatibility, but render
+// as: base_blue = grass, deep_blue = dirt, ice_stone = snow, sand_blue = sand,
+// royal_brick = stone, cyan_wood = wood.
+const BIOME_BLOCKS: Record<Biome, { surface: BlockType; sub: BlockType; trees: boolean; trunk: BlockType; hasLeaves: boolean }> = {
+  plains: { surface: 'base_blue',  sub: 'deep_blue',   trees: true,  trunk: 'cyan_wood', hasLeaves: true },
+  desert: { surface: 'sand_blue',  sub: 'royal_brick', trees: false, trunk: 'cyan_wood', hasLeaves: false },
+  snow:   { surface: 'ice_stone',  sub: 'deep_blue',   trees: true,  trunk: 'ice_stone', hasLeaves: false },
+};
+
 export function generateWorld(seed = 1337): Block[] {
   const rng = mulberry32(seed);
-  const noise2D = createNoise2D(rng);
+  const heightNoise = createNoise2D(rng);
+  const biomeNoise = createNoise2D(rng);
   const blocks: Block[] = [];
   const heightMap: number[][] = [];
+  const biomeMap: Biome[][] = [];
 
   const half = WORLD_SIZE / 2;
 
-  // 1. Build height map
+  // 1. Build height map + biome map
   for (let x = 0; x < WORLD_SIZE; x++) {
     heightMap[x] = [];
+    biomeMap[x] = [];
     for (let z = 0; z < WORLD_SIZE; z++) {
       const nx = (x - half) / 32;
       const nz = (z - half) / 32;
       // Layered noise for gentle hills
       const n =
-        noise2D(nx, nz) * 0.6 +
-        noise2D(nx * 2, nz * 2) * 0.3 +
-        noise2D(nx * 4, nz * 4) * 0.1;
+        heightNoise(nx, nz) * 0.6 +
+        heightNoise(nx * 2, nz * 2) * 0.3 +
+        heightNoise(nx * 4, nz * 4) * 0.1;
       // Map [-1, 1] → [0, 20]
       const h = Math.max(0, Math.min(20, Math.floor((n + 1) * 10)));
       heightMap[x][z] = h;
+
+      // Biome: low-frequency noise so regions are chunky rather than noisy per-block
+      const b = biomeNoise((x - half) / 64, (z - half) / 64);
+      if (b < -0.3) biomeMap[x][z] = 'desert';
+      else if (b > 0.35) biomeMap[x][z] = 'snow';
+      else biomeMap[x][z] = 'plains';
     }
   }
 
-  // 2. Fill terrain columns
+  // 2. Fill terrain columns using biome-appropriate blocks
   for (let x = 0; x < WORLD_SIZE; x++) {
     for (let z = 0; z < WORLD_SIZE; z++) {
       const h = heightMap[x][z];
+      const biome = biomeMap[x][z];
+      const palette = BIOME_BLOCKS[biome];
       for (let y = 0; y <= h; y++) {
         let type: BlockType;
         if (y === h) {
-          type = 'base_blue';
+          type = palette.surface;
         } else if (y >= h - 3) {
-          type = 'deep_blue';
+          type = palette.sub;
         } else {
-          type = 'ice_stone';
+          // Deep stone below sub-layer. Plains/snow use gray stone (royal_brick),
+          // desert uses its sandstone sub (royal_brick too). One consistent deep layer.
+          type = 'royal_brick';
         }
         blocks.push({ x, y, z, type });
-      }
-      // Sand patches on flat low ground
-      if (h <= 3 && rng() < 0.08) {
-        // Replace top with sand
-        const top = blocks[blocks.length - 1];
-        if (top && top.x === x && top.z === z && top.y === h) {
-          top.type = 'sand_blue';
-        }
       }
     }
   }
 
-  // 3. Scatter trees
-  const treeCount = 15 + Math.floor(rng() * 6); // 15–20
+  // 3. Scatter trees — only in tree-friendly biomes, at least 2 blocks from edge.
+  const treeCount = 25 + Math.floor(rng() * 10); // 25–34
   const placedTrees: Array<{ x: number; z: number }> = [];
   let attempts = 0;
-  while (placedTrees.length < treeCount && attempts < 400) {
+  while (placedTrees.length < treeCount && attempts < 800) {
     attempts++;
     const tx = 4 + Math.floor(rng() * (WORLD_SIZE - 8));
     const tz = 4 + Math.floor(rng() * (WORLD_SIZE - 8));
+    const biome = biomeMap[tx][tz];
+    const palette = BIOME_BLOCKS[biome];
+    if (!palette.trees) continue;
     // Spacing
     if (placedTrees.some((t) => Math.abs(t.x - tx) + Math.abs(t.z - tz) < 6)) continue;
     const h = heightMap[tx][tz];
     if (h < 2 || h > 16) continue;
 
-    // 4-block trunk
-    for (let dy = 1; dy <= 4; dy++) {
-      blocks.push({ x: tx, y: h + dy, z: tz, type: 'cyan_wood' });
+    const trunkHeight = 4 + Math.floor(rng() * 2); // 4–5
+    for (let dy = 1; dy <= trunkHeight; dy++) {
+      blocks.push({ x: tx, y: h + dy, z: tz, type: palette.trunk });
     }
-    // 3x3x2 canopy on top
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        for (let dy = 4; dy <= 5; dy++) {
-          // Skip corners on top layer for a rounder shape
-          if (dy === 5 && Math.abs(dx) === 1 && Math.abs(dz) === 1) continue;
-          const bx = tx + dx;
-          const bz = tz + dz;
-          const by = h + dy;
-          if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
-          if (by >= WORLD_HEIGHT) continue;
-          // Don't overwrite trunk
-          if (dx === 0 && dz === 0 && dy === 4) continue;
-          blocks.push({ x: bx, y: by, z: bz, type: 'cyan_wood' });
+    // 3x3x2 canopy on top. In biomes with real leaves, use grass-green blocks
+    // (base_blue) so the canopy reads as foliage. Snow biome skips leaves to
+    // look like bare winter trunks poking out of snow.
+    if (palette.hasLeaves) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dy = trunkHeight; dy <= trunkHeight + 1; dy++) {
+            // Skip corners on top layer for a rounder shape
+            if (dy === trunkHeight + 1 && Math.abs(dx) === 1 && Math.abs(dz) === 1) continue;
+            const bx = tx + dx;
+            const bz = tz + dz;
+            const by = h + dy;
+            if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+            if (by >= WORLD_HEIGHT) continue;
+            // Don't overwrite trunk
+            if (dx === 0 && dz === 0 && dy === trunkHeight) continue;
+            blocks.push({ x: bx, y: by, z: bz, type: 'base_blue' });
+          }
         }
       }
     }

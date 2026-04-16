@@ -19,14 +19,17 @@ const lastMoveBroadcast: Map<string, number> = new Map();
 const MOVE_THROTTLE_MS = 100; // 10 Hz
 const DB_WRITE_THROTTLE_MS = 30_000;
 
-function hashColor(name: string): string {
+function hashColor(name: string, verifiedBase = false): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) {
     h = (h * 31 + name.charCodeAt(i)) | 0;
   }
-  // Produce a blue-family color: hue 195–230, saturation 60–90, lightness 45–65
-  const hue = 195 + (Math.abs(h) % 35);
-  const sat = 60 + (Math.abs(h >> 5) % 30);
+  // Natural earth-tone palette by default (browns, greens, muted reds).
+  // Verified Base wallets get a small purple shift so they're cosmetically
+  // distinct — NOT privileged gameplay-wise.
+  const baseHue = 20 + (Math.abs(h) % 120); // 20–140: red→yellow→green
+  const hue = verifiedBase ? (baseHue + 200) % 360 : baseHue; // shift toward purple
+  const sat = 45 + (Math.abs(h >> 5) % 35);
   const light = 45 + (Math.abs(h >> 10) % 20);
   return hslToHex(hue, sat, light);
 }
@@ -60,7 +63,7 @@ export function registerSocketHandlers(io: Server) {
 
     let joined = false;
 
-    socket.on('join', async (payload: { username: string; walletAddress?: string }) => {
+    socket.on('join', async (payload: { username: string; walletAddress?: string; verifiedBase?: boolean }) => {
       try {
         if (joined) return;
         if (!world.isReady()) {
@@ -69,6 +72,7 @@ export function registerSocketHandlers(io: Server) {
         }
         const rawName = (payload?.username ?? '').trim();
         const wallet = payload?.walletAddress?.trim() || undefined;
+        const verifiedBase = !!payload?.verifiedBase && !!wallet;
 
         if (!rawName) {
           socket.emit('error', { message: 'Username required.' });
@@ -112,8 +116,10 @@ export function registerSocketHandlers(io: Server) {
           { onConflict: 'username' },
         );
 
-        const color = hashColor(rawName);
+        const color = hashColor(rawName, verifiedBase);
         const sp = world.spawnPoint;
+        // Prefix verified-Base players' display name with a tiny hex glyph.
+        const displayName = verifiedBase ? `⬢ ${rawName}` : rawName;
         const self: PlayerState = {
           id: socket.id,
           username: rawName,
@@ -144,9 +150,15 @@ export function registerSocketHandlers(io: Server) {
           blocks: nearby.map((b) => ({ x: b.x, y: b.y, z: b.z, type: b.type })),
           spawnPoint: sp,
           onlinePlayers,
-          you: { id: socket.id, username: rawName, color },
+          you: { id: socket.id, username: rawName, color, verifiedBase },
           worldSize: WORLD_SIZE,
           worldHeight: WORLD_HEIGHT,
+        });
+
+        // Welcome — per-player; surfaces as a system chat line and a center
+        // toast on the client. Toast is cosmetic and auto-dismisses.
+        socket.emit('chat:welcome', {
+          message: `Welcome, ${displayName}! You spawned at ${Math.floor(sp.x)}, ${Math.floor(sp.z)}. Press T to chat.`,
         });
 
         // Stream rest of the world in chunks so far blocks arrive after initial paint
@@ -191,10 +203,11 @@ export function registerSocketHandlers(io: Server) {
           x: sp.x,
           y: sp.y,
           z: sp.z,
+          verifiedBase,
         });
         io.emit('chat:received', {
           username: 'system',
-          message: `🔵 ${rawName} joined the world`,
+          message: `${verifiedBase ? '⬢' : '·'} ${rawName} joined the world`,
           isSystem: true,
         });
       } catch (err) {
@@ -358,7 +371,7 @@ export function registerSocketHandlers(io: Server) {
         io.emit('player:left', { id: socket.id, username: self.username });
         io.emit('chat:received', {
           username: 'system',
-          message: `⚪ ${self.username} left the world`,
+          message: `· ${self.username} left the world`,
           isSystem: true,
         });
         console.log(`[socket] ${self.username} disconnected`);

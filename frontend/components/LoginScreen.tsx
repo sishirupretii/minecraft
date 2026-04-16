@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useBalance } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { base } from 'wagmi/chains';
 
 interface Props {
-  onLogin: (username: string, wallet?: string) => void;
+  onLogin: (username: string, wallet?: string, verifiedBase?: boolean) => void;
 }
 
 function shortWallet(addr: string): string {
@@ -17,6 +18,14 @@ export default function LoginScreen({ onLogin }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { address, isConnected } = useAccount();
+  // Query Base-mainnet ETH balance only when a wallet is connected. Cheap,
+  // read-only, no gas. Purely used to flag the account as "seen on Base".
+  const { data: balance, isLoading: balanceLoading } = useBalance({
+    address,
+    chainId: base.id,
+    query: { enabled: !!address },
+  });
+  const verifiedBase = !!balance && balance.value > 0n;
 
   useEffect(() => {
     if (isConnected && address) {
@@ -41,12 +50,12 @@ export default function LoginScreen({ onLogin }: Props) {
       return;
     }
     setLoading(true);
-    onLogin(shortWallet(address), address);
+    onLogin(shortWallet(address), address, verifiedBase);
   }
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden">
-      {/* Animated gradient backdrop */}
+      {/* Animated Base-blue backdrop — matches agentcraft.fun */}
       <div
         className="absolute inset-0"
         style={{
@@ -63,7 +72,7 @@ export default function LoginScreen({ onLogin }: Props) {
           backgroundSize: '40px 40px',
         }}
       />
-      {/* Parallax dot field — 40 slow-drifting specks for atmosphere */}
+      {/* Parallax dot field */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {Array.from({ length: 40 }).map((_, i) => {
           const size = 1 + Math.random() * 2;
@@ -138,13 +147,28 @@ export default function LoginScreen({ onLogin }: Props) {
                 showBalance={false}
               />
               {isConnected && address && (
-                <button
-                  className="bc-btn w-full"
-                  onClick={handleWalletLogin}
-                  disabled={loading}
-                >
-                  {loading ? 'Entering BaseCraft…' : `Enter as ${shortWallet(address)}`}
-                </button>
+                <>
+                  <button
+                    className="bc-btn w-full"
+                    onClick={handleWalletLogin}
+                    disabled={loading}
+                  >
+                    {loading ? 'Entering BaseCraft…' : `Enter as ${shortWallet(address)}`}
+                  </button>
+                  {balanceLoading ? (
+                    <div className="text-center text-xs text-white/40">
+                      Checking Base balance…
+                    </div>
+                  ) : verifiedBase ? (
+                    <div className="rounded-md border border-[#8bbf68]/40 bg-[#8bbf68]/10 px-3 py-1.5 text-center text-xs text-[#b5e08c]">
+                      ⬢ Verified Base wallet
+                    </div>
+                  ) : (
+                    <div className="text-center text-xs text-white/40">
+                      Connect to Base to verify (optional)
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

@@ -19,10 +19,26 @@ const Game = dynamicImport(() => import('@/components/Game'), {
   ),
 });
 
+interface Session {
+  username: string;
+  wallet?: string;
+  verifiedBase?: boolean;
+}
+
 export default function Home() {
-  const [session, setSession] = useState<{ username: string; wallet?: string } | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   if (!session) {
-    return <LoginScreen onLogin={(u, w) => setSession({ username: u, wallet: w })} />;
+    return (
+      <LoginScreen
+        onLogin={(u, w, v) => setSession({ username: u, wallet: w, verifiedBase: v })}
+      />
+    );
   }
-  return <Game username={session.username} walletAddress={session.wallet} />;
+  return (
+    <Game
+      username={session.username}
+      walletAddress={session.wallet}
+      verifiedBase={session.verifiedBase}
+    />
+  );
 }

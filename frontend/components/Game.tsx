@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { getSocket, disconnectSocket } from '@/lib/socket';
 import { BLOCKS, BLOCK_TYPES, BlockType } from '@/lib/blocks';
+import { getAudio } from '@/lib/audio';
 import { WorldRenderer } from './World';
 import { PlayerController } from './Player';
 import { OtherPlayersManager } from './OtherPlayers';
@@ -15,11 +16,20 @@ import PlayerList from './PlayerList';
 interface Props {
   username: string;
   walletAddress?: string;
+  verifiedBase?: boolean;
 }
 
 let chatIdCounter = 1;
 
-export default function Game({ username, walletAddress }: Props) {
+// Length of a full day in seconds. 4 min is short enough for new players to
+// see the cycle, long enough that it doesn't feel like a disco.
+const DAY_LENGTH_SECONDS = 240;
+
+// Sea level — any terrain below this y is underwater. Keep in sync with
+// world-gen's height range (0–20) so only the lower third of terrain floods.
+const SEA_LEVEL = 4;
+
+export default function Game({ username, walletAddress, verifiedBase }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<PlayerController | null>(null);
   const [selectedBlock, setSelectedBlock] = useState(0);
@@ -39,6 +49,11 @@ export default function Game({ username, walletAddress }: Props) {
   const [pointerLocked, setPointerLocked] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
   const [webglError, setWebglError] = useState<string | null>(null);
+  const [dayPhase, setDayPhase] = useState(0.25); // start at noon
+  const [muted, setMuted] = useState(false);
+  const [fps, setFps] = useState<number | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [invulnerable, setInvulnerable] = useState(false);
 
   // Track refs so callbacks use fresh values without re-binding
   useEffect(() => {
@@ -58,11 +73,19 @@ export default function Game({ username, walletAddress }: Props) {
   }
 
   useEffect(() => {
+    const audio = getAudio();
+    setMuted(audio.isMuted);
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Test WebGL support before doing anything heavy; bail with a clear message
-    // if the user's browser can't render. Otherwise they'd just see a black canvas.
+    // Debug: show FPS when ?debug=1 is in the URL.
+    const showFps =
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+
+    // Test WebGL support
     try {
       const testCtx =
         canvas.getContext('webgl2') ||
@@ -83,19 +106,21 @@ export default function Game({ username, walletAddress }: Props) {
 
     // ---- Three.js scene ----
     const scene = new THREE.Scene();
-    // Base-blue horizon tint; fog slightly richer than the sky tone so distant
-    // blocks visually sink into atmosphere rather than match the sky exactly.
-    scene.background = new THREE.Color(0x2856d8);
-    scene.fog = new THREE.Fog(0x2856d8, 20, 80);
+    // Initial daytime sky / fog. Both are updated each tick by the day/night
+    // cycle — this is just the first-frame fallback color.
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 20, 90);
 
-    // Sky shader: near-black zenith → Base-blue horizon → pale near-ground tint.
-    const skyGeom = new THREE.SphereGeometry(250, 32, 16);
+    // ---- Sky shader ----
+    // Three-stop vertical gradient (top / horizon / bottom). All three colors
+    // are uniforms the render loop lerps between day/sunset/night palettes.
+    const skyGeom = new THREE.SphereGeometry(300, 32, 16);
     const skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       uniforms: {
-        topColor: { value: new THREE.Color(0x020420) },
-        horizonColor: { value: new THREE.Color(0x2856d8) },
-        bottomColor: { value: new THREE.Color(0x6a95e6) },
+        topColor: { value: new THREE.Color(0x2a6fd0) },
+        horizonColor: { value: new THREE.Color(0x87ceeb) },
+        bottomColor: { value: new THREE.Color(0xc8d8e8) },
       },
       vertexShader: `
         varying vec3 vWorldPos;
@@ -126,13 +151,37 @@ export default function Game({ username, walletAddress }: Props) {
     const sky = new THREE.Mesh(skyGeom, skyMat);
     scene.add(sky);
 
-    // --- Procedural cloud layer. A large, slowly-drifting semi-transparent
-    // plane at y=180 with a value-noise alpha texture. Adds depth to the sky
-    // without any external assets or new dependencies.
+    // ---- Stars ----
+    // 220 Points randomly placed on the upper hemisphere of the sky sphere.
+    // They fade in only when dayMix drops low (night time).
+    const starGeom = new THREE.BufferGeometry();
+    const starCount = 220;
+    const starPositions = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const phi = Math.random() * Math.PI * 2;
+      const theta = Math.random() * Math.PI * 0.5; // upper hemisphere only
+      const r = 280;
+      starPositions[i * 3 + 0] = Math.sin(theta) * Math.cos(phi) * r;
+      starPositions[i * 3 + 1] = Math.cos(theta) * r + 20; // lift slightly
+      starPositions[i * 3 + 2] = Math.sin(theta) * Math.sin(phi) * r;
+    }
+    starGeom.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    const starMat = new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 1.4,
+      sizeAttenuation: false,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: false,
+    });
+    const stars = new THREE.Points(starGeom, starMat);
+    stars.renderOrder = -2;
+    scene.add(stars);
+
+    // ---- Cloud layer ----
     const cloudTexSize = 128;
     const cloudData = new Uint8Array(cloudTexSize * cloudTexSize * 4);
-    // Lightweight value-noise: blend a coarse lattice of random samples.
-    // Good enough for clouds and costs ~16ms to build once.
     const lattice = 8;
     const samples: number[] = [];
     for (let i = 0; i < (lattice + 1) * (lattice + 1); i++) samples.push(Math.random());
@@ -153,7 +202,6 @@ export default function Game({ username, walletAddress }: Props) {
         const top = a + (b - a) * tx;
         const bot = c + (d - c) * tx;
         const n = top + (bot - top) * ty;
-        // Threshold the noise so we only get wispy puffs, not a solid sheet.
         const puff = Math.max(0, (n - 0.45) / 0.55);
         const idx = (y * cloudTexSize + x) * 4;
         cloudData[idx] = 255;
@@ -183,30 +231,22 @@ export default function Game({ username, walletAddress }: Props) {
       opacity: 0.7,
     });
     const cloudMesh = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), cloudMat);
-    cloudMesh.rotation.x = -Math.PI / 2; // face down
+    cloudMesh.rotation.x = -Math.PI / 2;
     cloudMesh.position.y = 180;
     cloudMesh.renderOrder = -1;
     scene.add(cloudMesh);
 
-    // --- Sun (warm disc) + Moon (pale disc), parented to camera so they feel "at infinity"
-    // and never get clipped by fog. We disable fog on their materials and give them a huge
-    // renderOrder-friendly position just inside the sky sphere.
+    // ---- Sun + moon ----
+    // Parented under celestialGroup which follows the camera, so they feel
+    // infinitely far away. Sun/moon orbit is set per-frame in the tick loop.
     const celestialGroup = new THREE.Group();
     scene.add(celestialGroup);
 
-    const sunGeom = new THREE.SphereGeometry(10, 24, 16);
-    const sunMat = new THREE.MeshBasicMaterial({
-      color: 0xfff1b8,
-      fog: false,
-      depthWrite: false,
-    });
-    const sun = new THREE.Mesh(sunGeom, sunMat);
-    sun.position.set(120, 90, -80);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xfff1b8, fog: false, depthWrite: false });
+    const sun = new THREE.Mesh(new THREE.SphereGeometry(10, 24, 16), sunMat);
     sun.renderOrder = -1;
     celestialGroup.add(sun);
 
-    // Inner sun glow
-    const sunGlowGeom = new THREE.SphereGeometry(18, 24, 16);
     const sunGlowMat = new THREE.MeshBasicMaterial({
       color: 0xffd873,
       fog: false,
@@ -214,13 +254,10 @@ export default function Game({ username, walletAddress }: Props) {
       opacity: 0.35,
       depthWrite: false,
     });
-    const sunGlow = new THREE.Mesh(sunGlowGeom, sunGlowMat);
-    sunGlow.position.copy(sun.position);
+    const sunGlow = new THREE.Mesh(new THREE.SphereGeometry(18, 24, 16), sunGlowMat);
     sunGlow.renderOrder = -2;
     celestialGroup.add(sunGlow);
 
-    // Outer sun halo — very soft, large radius. Fakes god-ray bloom
-    // without any post-processing pass (which would need EffectComposer).
     const sunHaloMat = new THREE.MeshBasicMaterial({
       color: 0xffe9a8,
       fog: false,
@@ -229,28 +266,25 @@ export default function Game({ username, walletAddress }: Props) {
       depthWrite: false,
     });
     const sunHalo = new THREE.Mesh(new THREE.SphereGeometry(28, 24, 16), sunHaloMat);
-    sunHalo.position.copy(sun.position);
     sunHalo.renderOrder = -3;
     celestialGroup.add(sunHalo);
 
-    const moonGeom = new THREE.SphereGeometry(7, 24, 16);
     const moonMat = new THREE.MeshBasicMaterial({
       color: 0xe6edff,
       fog: false,
       depthWrite: false,
     });
-    const moon = new THREE.Mesh(moonGeom, moonMat);
-    moon.position.set(-130, 70, 90);
+    const moon = new THREE.Mesh(new THREE.SphereGeometry(7, 24, 16), moonMat);
     moon.renderOrder = -1;
     celestialGroup.add(moon);
 
-    // --- Block highlight: inner crisp Base-blue outline + an outer pulsing
-    // halo that gently breathes at 4 Hz. Makes the targeted block unmistakable.
+    // ---- Block highlight ----
+    // Minecraft-style: crisp black outline + subtle outer white pulse.
     const highlightInnerEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.003, 1.003, 1.003));
     const highlightInnerMat = new THREE.LineBasicMaterial({
-      color: 0x4a7cff,
+      color: 0x000000,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.9,
       fog: false,
       depthTest: true,
     });
@@ -261,9 +295,9 @@ export default function Game({ username, walletAddress }: Props) {
 
     const highlightOuterEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.05, 1.05, 1.05));
     const highlightOuterMat = new THREE.LineBasicMaterial({
-      color: 0x4a7cff,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.35,
       fog: false,
       depthTest: true,
     });
@@ -287,53 +321,53 @@ export default function Game({ username, walletAddress }: Props) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // Filmic tonemapping + shadows transform the scene from flat-lit cubes
-    // into an atmospheric sandbox with real depth.
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    // --- Lighting rig ---------------------------------------------------
-    // Ambient: cool blue fill. Kept low so directional contribution reads.
-    const ambient = new THREE.AmbientLight(0x8aa8ff, 0.25);
+    // ---- Lighting rig ----
+    const ambient = new THREE.AmbientLight(0xaab8cc, 0.3);
     scene.add(ambient);
 
-    // Sun: warm-white directional with shadow casting. Orthographic shadow
-    // frustum tuned to the ~160-block visibility radius so shadow-map
-    // resolution isn't wasted on off-camera geometry.
-    const sun_light = new THREE.DirectionalLight(0xfff4d6, 1.4);
-    sun_light.position.set(80, 120, 40);
-    sun_light.castShadow = true;
-    sun_light.shadow.mapSize.set(2048, 2048);
-    sun_light.shadow.camera.left = -80;
-    sun_light.shadow.camera.right = 80;
-    sun_light.shadow.camera.top = 80;
-    sun_light.shadow.camera.bottom = -80;
-    sun_light.shadow.camera.near = 1;
-    sun_light.shadow.camera.far = 300;
-    sun_light.shadow.bias = -0.0005;
-    scene.add(sun_light);
-    scene.add(sun_light.target);
+    const sunLight = new THREE.DirectionalLight(0xfff4d6, 1.4);
+    sunLight.position.set(80, 120, 40);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.camera.left = -80;
+    sunLight.shadow.camera.right = 80;
+    sunLight.shadow.camera.top = 80;
+    sunLight.shadow.camera.bottom = -80;
+    sunLight.shadow.camera.near = 1;
+    sunLight.shadow.camera.far = 300;
+    sunLight.shadow.bias = -0.0005;
+    scene.add(sunLight);
+    scene.add(sunLight.target);
 
-    // Hemisphere: sky tint from above, deep ground tint from below. Sells the
-    // "world under an open sky" feel far better than a single ambient.
-    const hemi = new THREE.HemisphereLight(0x6a95e6, 0x1a2048, 0.45);
+    // Hemisphere: sky tint from above, brown ground tint from below.
+    const hemi = new THREE.HemisphereLight(0x9ec6f7, 0x5a4028, 0.5);
     scene.add(hemi);
 
-    // Base-blue rim: a second directional from the opposite side, tinted
-    // with the brand colour. Gives block edges a subtle signature Base glow.
-    const rim = new THREE.DirectionalLight(0x4a7cff, 0.35);
-    rim.position.set(-60, 40, -30);
-    scene.add(rim);
+    // ---- Water plane ----
+    const waterGeom = new THREE.PlaneGeometry(512, 512);
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: 0x2d7bd4,
+      roughness: 0.2,
+      metalness: 0.55,
+      transparent: true,
+      opacity: 0.72,
+    });
+    const water = new THREE.Mesh(waterGeom, waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(0, SEA_LEVEL, 0);
+    water.receiveShadow = true;
+    scene.add(water);
 
     // World + players
     const world = new WorldRenderer(scene);
     const others = new OtherPlayersManager(scene);
 
-    // --- Break particles: when a block is destroyed, emit 6 small cube shards
-    // that fly outward, fall under gravity, and fade out. Bought juice for
-    // effectively zero performance cost — max ~50 active meshes.
+    // ---- Break particles ----
     type Particle = {
       mesh: THREE.Mesh;
       velocity: THREE.Vector3;
@@ -349,7 +383,7 @@ export default function Game({ username, walletAddress }: Props) {
       for (let i = 0; i < 6; i++) {
         const mat = new THREE.MeshStandardMaterial({
           color: _particleColor.clone(),
-          roughness: 0.7,
+          roughness: 0.8,
           transparent: true,
           opacity: 1,
         });
@@ -375,7 +409,7 @@ export default function Game({ username, walletAddress }: Props) {
       }
     };
 
-    // Temporary spawn placeholder; will be replaced on world:init
+    // ---- Player ----
     const tempSpawn = { x: 64.5, y: 30, z: 64.5 };
     const player = new PlayerController({
       camera,
@@ -385,7 +419,9 @@ export default function Game({ username, walletAddress }: Props) {
     });
     playerRef.current = player;
 
-    // Hotbar wiring
+    // ---- Audio wiring ----
+    const audio = getAudio();
+
     player.onHotbarSelect = (i) => setSelectedBlock(i);
     player.onHotbarScroll = (delta) => {
       setSelectedBlock((prev) => {
@@ -403,7 +439,15 @@ export default function Game({ username, walletAddress }: Props) {
       setChatOpen(true);
       if (document.pointerLockElement === canvas) document.exitPointerLock();
     };
-    player.onPointerLockChange = (locked) => setPointerLocked(locked);
+    player.onPointerLockChange = (locked) => {
+      setPointerLocked(locked);
+      // First pointer-lock gesture is our chance to unlock the AudioContext.
+      if (locked) {
+        audio.resume().catch(() => {});
+      }
+    };
+    player.onJump = () => audio.playJump();
+    player.onFootstep = () => audio.playFootstep();
 
     // ---- Socket wiring ----
     const socket = getSocket();
@@ -411,7 +455,7 @@ export default function Game({ username, walletAddress }: Props) {
     const onConnect = () => {
       console.log('[socket] connected', socket.id);
       setSocketConnected(true);
-      socket.emit('join', { username, walletAddress });
+      socket.emit('join', { username, walletAddress, verifiedBase });
     };
 
     const onDisconnect = (reason: string) => {
@@ -422,7 +466,7 @@ export default function Game({ username, walletAddress }: Props) {
 
     const onReconnect = () => {
       appendChat({ username: 'system', message: 'Reconnected.', isSystem: true });
-      socket.emit('join', { username, walletAddress });
+      socket.emit('join', { username, walletAddress, verifiedBase });
     };
 
     const onError = (payload: { message: string }) => {
@@ -453,6 +497,10 @@ export default function Game({ username, walletAddress }: Props) {
       setSelfColor(payload.you.color);
 
       player.setPosition(payload.spawnPoint.x, payload.spawnPoint.y, payload.spawnPoint.z);
+
+      // Spawn protection — 5s visual pulse only.
+      setInvulnerable(true);
+      setTimeout(() => setInvulnerable(false), 5000);
     };
 
     const onWorldChunk = (payload: {
@@ -484,9 +532,14 @@ export default function Game({ username, walletAddress }: Props) {
 
     const onBlockUpdated = (p: { x: number; y: number; z: number; type: BlockType | null; placedBy?: string }) => {
       if (p.type === null) {
+        // Remember the block's type *before* the renderer forgets it, so we
+        // can pass the right voice to the audio engine.
+        const wasType = world.getType(p.x, p.y, p.z);
         world.removeBlock(p.x, p.y, p.z, true);
+        if (wasType) audio.playBlockBreak(wasType);
       } else {
         world.addBlock(p.x, p.y, p.z, p.type, true);
+        audio.playBlockPlace(p.type);
       }
     };
 
@@ -508,6 +561,12 @@ export default function Game({ username, walletAddress }: Props) {
       player.setPosition(p.x, p.y, p.z);
     };
 
+    const onWelcome = (p: { message: string }) => {
+      appendChat({ username: 'system', message: p.message, isSystem: true });
+      setToast(p.message);
+      setTimeout(() => setToast(null), 3200);
+    };
+
     function refreshOnlineList() {
       setOnlinePlayers(others.list());
     }
@@ -526,12 +585,11 @@ export default function Game({ username, walletAddress }: Props) {
     socket.on('chat:received', onChatReceived);
     socket.on('chat:history', onChatHistory);
     socket.on('player:teleport', onTeleport);
+    socket.on('chat:welcome', onWelcome);
 
-    // If socket already connected (e.g. HMR), trigger join now
     if (socket.connected) onConnect();
     else socket.connect();
 
-    // Refresh online list when others change
     const refreshInterval = setInterval(refreshOnlineList, 1000);
 
     // Player callbacks that emit to server
@@ -545,17 +603,62 @@ export default function Game({ username, walletAddress }: Props) {
       }
     };
     player.onBreak = (x, y, z) => {
+      // Play the break sound locally for instant feedback even before the
+      // server round-trips. Remote players will hear it via onBlockUpdated.
+      const t = world.getType(x, y, z);
+      if (t) audio.playBlockBreak(t);
       socket.emit('block:break', { x, y, z });
     };
     player.onPlace = (x, y, z) => {
       const type = BLOCK_TYPES[selectedRef.current];
+      audio.playBlockPlace(type);
       socket.emit('block:place', { x, y, z, type });
     };
+
+    // ---- Day/night palette lerp targets ----
+    // Palettes in vec3 form (normalized 0..1) so we can lerp cleanly.
+    const PALETTE = {
+      night: {
+        top: new THREE.Color(0x000208),
+        horizon: new THREE.Color(0x0a1545),
+        bottom: new THREE.Color(0x1a2860),
+        sun: new THREE.Color(0x4a6cb8),
+        hemiSky: new THREE.Color(0x3a4870),
+        hemiGround: new THREE.Color(0x15110a),
+        fog: new THREE.Color(0x0a1545),
+      },
+      day: {
+        top: new THREE.Color(0x2a6fd0),
+        horizon: new THREE.Color(0x87ceeb),
+        bottom: new THREE.Color(0xc8d8e8),
+        sun: new THREE.Color(0xfff4d6),
+        hemiSky: new THREE.Color(0x9ec6f7),
+        hemiGround: new THREE.Color(0x6a5a3a),
+        fog: new THREE.Color(0x9ec6f7),
+      },
+      sunset: {
+        top: new THREE.Color(0x0e1840),
+        horizon: new THREE.Color(0xff7a3d),
+        bottom: new THREE.Color(0xffb37a),
+        sun: new THREE.Color(0xffb473),
+        hemiSky: new THREE.Color(0xffa060),
+        hemiGround: new THREE.Color(0x3a2010),
+        fog: new THREE.Color(0xff9a5c),
+      },
+    };
+    const _tmpCol = new THREE.Color();
+    const _tmpCol2 = new THREE.Color();
+    const lerp3 = (a: THREE.Color, b: THREE.Color, t: number, out: THREE.Color) =>
+      out.copy(a).lerp(b, t);
 
     // ---- Render loop ----
     const clock = new THREE.Clock();
     let elapsed = 0;
     let raf = 0;
+    let frameSamples: number[] = [];
+    let lowFpsSince = 0;
+    let shadowsDisabled = false;
+
     const tick = () => {
       const dt = clock.getDelta();
       elapsed += dt;
@@ -563,30 +666,114 @@ export default function Game({ username, walletAddress }: Props) {
       others.update(dt);
       world.update();
 
-      // Celestial group + clouds + shadow camera follow the player so sky
-      // elements feel "at infinity" and shadows stay in range.
+      // ---- Day/night math ----
+      // dayPhase sweeps 0→1 over DAY_LENGTH_SECONDS. We start at noon (0.25)
+      // so players aren't plunged into darkness the second they spawn.
+      const phase = ((elapsed / DAY_LENGTH_SECONDS) + 0.25) % 1;
+      const sunAngle = phase * Math.PI * 2 - Math.PI / 2;
+      const sy = Math.sin(sunAngle); // -1 (midnight) .. +1 (noon)
+      const sx = Math.cos(sunAngle);
+
+      // Dominant mix: 0 = deep night, 1 = broad day.
+      const dayMix = Math.max(0, Math.min(1, (sy + 0.1) * 1.2));
+      // Sunset weight: peaks when sun is near the horizon (|sy| small).
+      const sunsetWeight = Math.max(0, 1 - Math.abs(sy) * 4) * Math.max(0, 1 - Math.abs(sy)); // tight bell
+
+      // Resolve sky colors: lerp night→day, then blend in sunset warmth.
+      lerp3(PALETTE.night.top, PALETTE.day.top, dayMix, _tmpCol);
+      _tmpCol.lerp(PALETTE.sunset.top, sunsetWeight);
+      skyMat.uniforms.topColor.value.copy(_tmpCol);
+
+      lerp3(PALETTE.night.horizon, PALETTE.day.horizon, dayMix, _tmpCol);
+      _tmpCol.lerp(PALETTE.sunset.horizon, sunsetWeight);
+      skyMat.uniforms.horizonColor.value.copy(_tmpCol);
+
+      lerp3(PALETTE.night.bottom, PALETTE.day.bottom, dayMix, _tmpCol);
+      _tmpCol.lerp(PALETTE.sunset.bottom, sunsetWeight);
+      skyMat.uniforms.bottomColor.value.copy(_tmpCol);
+
+      // Scene fog / background match the horizon tint so distant terrain
+      // doesn't pop against the sky.
+      lerp3(PALETTE.night.fog, PALETTE.day.fog, dayMix, _tmpCol);
+      _tmpCol.lerp(PALETTE.sunset.fog, sunsetWeight);
+      (scene.fog as THREE.Fog).color.copy(_tmpCol);
+      scene.background = _tmpCol.clone();
+
+      // Sun / moon / light orbit
+      const sunRadius = 220;
+      sun.position.set(sx * sunRadius, sy * 150, 40);
+      sunGlow.position.copy(sun.position);
+      sunHalo.position.copy(sun.position);
+      moon.position.set(-sx * sunRadius, -sy * 150, 40);
+
+      // Sun light orbits with the sun; disable below horizon.
+      sunLight.position.set(
+        camera.position.x + sx * 120,
+        camera.position.y + Math.max(20, sy * 150),
+        camera.position.z + 40,
+      );
+      sunLight.target.position.copy(camera.position);
+
+      lerp3(PALETTE.night.sun, PALETTE.day.sun, dayMix, _tmpCol);
+      _tmpCol.lerp(PALETTE.sunset.sun, sunsetWeight);
+      sunLight.color.copy(_tmpCol);
+      sunLight.intensity = 0.05 + 1.35 * Math.max(0, sy);
+
+      // Sun visibility: hide the disc + glow when it's below horizon
+      sun.visible = sy > -0.05;
+      sunGlow.visible = sun.visible;
+      sunHalo.visible = sun.visible;
+      moon.visible = sy < 0.05;
+
+      // Shadows only while sun is up — prevents weird flicker at night.
+      if (sy < 0 && sunLight.castShadow) sunLight.castShadow = false;
+      else if (sy >= 0.05 && !sunLight.castShadow && !shadowsDisabled) sunLight.castShadow = true;
+
+      // Hemisphere light follows palette
+      lerp3(PALETTE.night.hemiSky, PALETTE.day.hemiSky, dayMix, _tmpCol);
+      _tmpCol.lerp(PALETTE.sunset.hemiSky, sunsetWeight);
+      hemi.color.copy(_tmpCol);
+      lerp3(PALETTE.night.hemiGround, PALETTE.day.hemiGround, dayMix, _tmpCol2);
+      hemi.groundColor.copy(_tmpCol2);
+      hemi.intensity = 0.15 + 0.4 * dayMix;
+
+      // Stars fade in at night only
+      starMat.opacity = Math.max(0, 1 - dayMix * 3);
+      stars.visible = starMat.opacity > 0.02;
+
+      // Clouds: fade slightly at night, drift on X
+      cloudMat.opacity = 0.25 + 0.45 * dayMix;
+      if (cloudTexture.offset) cloudTexture.offset.x = (elapsed * 0.008) % 1;
+
+      // Celestial + cloud follow the player
       celestialGroup.position.copy(camera.position);
       cloudMesh.position.x = camera.position.x;
       cloudMesh.position.z = camera.position.z;
-      // Drift clouds on X by animating the texture offset — no geometry update
-      if (cloudTexture.offset) cloudTexture.offset.x = (elapsed * 0.008) % 1;
-      // Keep sun's shadow camera centered on the player
-      sun_light.target.position.copy(camera.position);
-      sun_light.position.set(
-        camera.position.x + 80,
-        camera.position.y + 120,
-        camera.position.z + 40,
-      );
+      stars.position.copy(camera.position);
 
-      // Block highlight: inner crisp outline + outer breathing halo
+      // Publish phase to HUD (throttled via React setState — React bails
+      // on identical values anyway, but be kind and only push every ~0.1s).
+      if (Math.floor(elapsed * 10) !== Math.floor((elapsed - dt) * 10)) {
+        setDayPhase(phase);
+      }
+
+      // Water bob + follow camera so its edges stay invisible in the fog
+      water.position.x = camera.position.x;
+      water.position.z = camera.position.z;
+      water.position.y = SEA_LEVEL + Math.sin(elapsed * 0.4) * 0.06;
+
+      // Ambient wind: louder up high
+      const altitudeWind = Math.max(0, Math.min(1, (camera.position.y - 15) / 30));
+      audio.setAmbientWind(altitudeWind);
+
+      // Block highlight pulse
       const target = world.raycast(camera, 5);
       if (target) {
         highlightInner.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
         highlightOuter.position.copy(highlightInner.position);
         highlightInner.visible = true;
         highlightOuter.visible = true;
-        // Pulse outer opacity between 0.2 and 0.6 at 4 Hz
-        highlightOuterMat.opacity = 0.4 + Math.sin(elapsed * 4) * 0.2;
+        highlightOuterMat.opacity = 0.25 + Math.sin(elapsed * 4) * 0.15;
       } else {
         highlightInner.visible = false;
         highlightOuter.visible = false;
@@ -602,22 +789,59 @@ export default function Game({ username, walletAddress }: Props) {
           particles.splice(i, 1);
           continue;
         }
-        // Gravity
         p.velocity.y -= 9 * dt;
         p.mesh.position.addScaledVector(p.velocity, dt);
-        // Spin for personality
         p.mesh.rotation.x += dt * 6;
         p.mesh.rotation.y += dt * 4;
-        // Fade out in the last 50% of life
         const t = p.age / p.life;
         const mat = p.mesh.material as THREE.MeshStandardMaterial;
         mat.opacity = 1 - Math.max(0, (t - 0.5) * 2);
+      }
+
+      // FPS counter + auto-disable shadows on low FPS. Sampled per-frame,
+      // reported once a second to avoid React thrash.
+      if (dt > 0) {
+        frameSamples.push(1 / dt);
+        if (frameSamples.length > 60) frameSamples.shift();
+      }
+      if (showFps && frameSamples.length > 0) {
+        // Throttle state updates to ~4 Hz
+        if (Math.floor(elapsed * 4) !== Math.floor((elapsed - dt) * 4)) {
+          const avg = frameSamples.reduce((a, b) => a + b, 0) / frameSamples.length;
+          setFps(avg);
+        }
+      }
+      // Auto-disable shadows if avg FPS < 35 for 3s straight
+      if (frameSamples.length >= 30) {
+        const avg = frameSamples.reduce((a, b) => a + b, 0) / frameSamples.length;
+        if (avg < 35 && !shadowsDisabled) {
+          if (lowFpsSince === 0) lowFpsSince = elapsed;
+          if (elapsed - lowFpsSince > 3) {
+            shadowsDisabled = true;
+            sunLight.castShadow = false;
+            renderer.shadowMap.enabled = false;
+            console.log('[perf] Disabling shadows — sustained low FPS. Press G to re-enable.');
+          }
+        } else {
+          lowFpsSince = 0;
+        }
       }
 
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+
+    // Re-enable shadows with G key
+    const onReenableShadows = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'g' && shadowsDisabled) {
+        shadowsDisabled = false;
+        renderer.shadowMap.enabled = true;
+        // castShadow toggles naturally via the day/night gating
+        console.log('[perf] Shadows re-enabled.');
+      }
+    };
+    window.addEventListener('keydown', onReenableShadows);
 
     // ---- Resize ----
     const onResize = () => {
@@ -632,6 +856,7 @@ export default function Game({ username, walletAddress }: Props) {
       cancelAnimationFrame(raf);
       clearInterval(refreshInterval);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onReenableShadows);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('reconnect', onReconnect);
@@ -646,11 +871,11 @@ export default function Game({ username, walletAddress }: Props) {
       socket.off('chat:received', onChatReceived);
       socket.off('chat:history', onChatHistory);
       socket.off('player:teleport', onTeleport);
+      socket.off('chat:welcome', onWelcome);
       player.dispose();
       playerRef.current = null;
       others.clear();
       world.dispose();
-      // Dispose procedural resources we allocated in this effect
       for (const p of particles) {
         scene.remove(p.mesh);
         (p.mesh.material as THREE.Material).dispose();
@@ -660,26 +885,34 @@ export default function Game({ username, walletAddress }: Props) {
       cloudTexture.dispose();
       cloudMat.dispose();
       cloudMesh.geometry.dispose();
+      waterGeom.dispose();
+      waterMat.dispose();
+      starGeom.dispose();
+      starMat.dispose();
       renderer.dispose();
       disconnectSocket();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [username, walletAddress]);
+  }, [username, walletAddress, verifiedBase]);
 
-  // Sync chatOpen → player (engine suppresses movement/mouse while chat is open)
+  // Sync chatOpen → player
   useEffect(() => {
     if (playerRef.current) {
       playerRef.current.chatOpen = chatOpen;
     }
   }, [chatOpen]);
 
+  const handleToggleMute = () => {
+    const now = getAudio().toggleMute();
+    setMuted(now);
+  };
+
   return (
     <div
       className="relative h-screen w-screen overflow-hidden"
       style={{
-        // Fall back to the sky's horizon color so there's never a pure-black
-        // flash between mount and the first WebGL frame — and so WebGL
-        // failures show a blue backdrop behind the error instead of black.
+        // Daylight sky gradient fallback — no pure-black flash between mount
+        // and first WebGL frame.
         background:
           'linear-gradient(180deg, #1a3ea8 0%, #6a95e6 100%)',
       }}
@@ -693,6 +926,12 @@ export default function Game({ username, walletAddress }: Props) {
         worldLoaded={worldLoaded}
         loadedCount={loadedBlocks}
         totalCount={totalBlocks}
+        dayPhase={dayPhase}
+        muted={muted}
+        onToggleMute={handleToggleMute}
+        fps={fps}
+        toast={toast}
+        invulnerable={invulnerable}
       />
 
       <Hotbar
@@ -722,7 +961,7 @@ export default function Game({ username, walletAddress }: Props) {
         {BLOCKS[BLOCK_TYPES[selectedBlock]].label}
       </div>
 
-      {/* WebGL fatal error — tell the user explicitly why the game is blank */}
+      {/* WebGL fatal error */}
       {webglError && (
         <div className="pointer-events-auto absolute inset-0 flex items-center justify-center p-6">
           <div className="max-w-md rounded-xl border border-red-400/40 bg-black/80 p-6 text-center shadow-2xl">
@@ -732,9 +971,7 @@ export default function Game({ username, walletAddress }: Props) {
         </div>
       )}
 
-      {/* Loading overlay — visible until socket is connected AND world:complete fires.
-          Without this, the user sees an empty blue canvas for 5-30s after clicking
-          "Enter World" and assumes the game is broken. */}
+      {/* Loading overlay */}
       {!webglError && (!socketConnected || !worldLoaded) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0a0e27]/80 backdrop-blur-sm">
           <div className="rounded-xl border border-white/20 bg-black/50 px-8 py-6 text-center shadow-2xl">
@@ -763,9 +1000,7 @@ export default function Game({ username, walletAddress }: Props) {
         </div>
       )}
 
-      {/* Click-to-play overlay — shown when the mouse isn't captured.
-          Clicking the canvas itself engages pointer lock (see Player.bindEvents),
-          so this overlay is purely informational and must NOT block mouse events. */}
+      {/* Click-to-play overlay */}
       {!pointerLocked && !chatOpen && worldLoaded && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-sm">
           <div className="rounded-xl border border-white/20 bg-black/60 px-8 py-6 text-center shadow-2xl">
@@ -793,4 +1028,3 @@ export default function Game({ username, walletAddress }: Props) {
     </div>
   );
 }
-
