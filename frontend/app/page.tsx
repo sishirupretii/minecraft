@@ -13,8 +13,16 @@ import LoginScreen from '@/components/LoginScreen';
 const Game = dynamicImport(() => import('@/components/Game'), {
   ssr: false,
   loading: () => (
-    <div className="flex h-screen w-screen items-center justify-center bg-[#0a0e27] text-white/80">
-      Loading game…
+    <div
+      className="mc-dirt-bg flex h-screen w-screen items-center justify-center"
+      style={{
+        fontFamily: "'Press Start 2P', monospace",
+        fontSize: '14px',
+        color: '#fff',
+        textShadow: '2px 2px 0 rgba(0,0,0,0.7)',
+      }}
+    >
+      LOADING WORLD...
     </div>
   ),
 });

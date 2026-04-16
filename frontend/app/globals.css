@@ -3,24 +3,39 @@
 @tailwind utilities;
 
 /* ---- Theme ----
-   Menu/HUD chrome stays Base-blue (matches agentcraft.fun look and the Base
-   brand). Only the WORLD itself uses the Minecraft green/earth palette —
-   those colors live in lib/blocks.ts and don't bleed into UI. */
+   UI is Minecraft-style chrome: stone-gray beveled buttons, pixel fonts,
+   dirt-tiled backgrounds, hard edges. The WORLD palette (grass/dirt/stone
+   colors used by blocks) lives in lib/blocks.ts and is independent of this
+   file. */
 :root {
-  --base-blue: #0052ff;
-  --base-blue-soft: #4a7cff;
-  --base-bg: #0a0e27;
+  --mc-stone:        #6b6b6b;
+  --mc-stone-light:  #9d9d9d;
+  --mc-stone-dark:   #353535;
+  --mc-stone-darker: #2a2a2a;
+  --mc-panel-bg:     rgba(0, 0, 0, 0.72);
+  --mc-text:         #ffffff;
+  --mc-text-shadow:  rgba(60, 60, 60, 0.9);
+  --mc-accent-yellow:#ffff55; /* Minecraft splash-text yellow */
+
+  /* Dirt tile — inline SVG, 16px, scaled 4x via background-size for that
+     crunchy low-res look. Slightly darkened compared to the in-world block
+     so menu text reads cleanly on top. */
+  --mc-dirt-tile: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%23604020'/%3E%3Crect x='1' y='1' width='2' height='2' fill='%234a2f18'/%3E%3Crect x='5' y='0' width='2' height='1' fill='%23775231'/%3E%3Crect x='8' y='3' width='2' height='2' fill='%234a2f18'/%3E%3Crect x='11' y='1' width='2' height='1' fill='%23775231'/%3E%3Crect x='14' y='2' width='1' height='1' fill='%23775231'/%3E%3Crect x='3' y='5' width='2' height='1' fill='%23775231'/%3E%3Crect x='6' y='7' width='2' height='2' fill='%234a2f18'/%3E%3Crect x='10' y='6' width='2' height='1' fill='%23775231'/%3E%3Crect x='13' y='5' width='2' height='2' fill='%234a2f18'/%3E%3Crect x='0' y='9' width='2' height='2' fill='%23775231'/%3E%3Crect x='4' y='10' width='2' height='2' fill='%234a2f18'/%3E%3Crect x='8' y='11' width='2' height='1' fill='%23775231'/%3E%3Crect x='11' y='10' width='2' height='2' fill='%234a2f18'/%3E%3Crect x='14' y='12' width='1' height='1' fill='%23775231'/%3E%3Crect x='2' y='13' width='1' height='1' fill='%234a2f18'/%3E%3Crect x='7' y='4' width='1' height='1' fill='%23775231'/%3E%3Crect x='5' y='14' width='2' height='1' fill='%234a2f18'/%3E%3Crect x='9' y='14' width='1' height='1' fill='%23775231'/%3E%3C/svg%3E");
 }
 
 html, body {
   margin: 0;
   padding: 0;
-  background-color: var(--base-bg);
+  background-color: #1a1a1a;
   color: #ffffff;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'VT323', ui-monospace, Menlo, monospace;
+  font-size: 18px;
   overscroll-behavior: none;
   height: 100%;
   width: 100%;
+  /* Don't antialias pixel fonts. */
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #__next, body {
@@ -35,38 +50,148 @@ canvas {
   display: block;
 }
 
-/* Scrollbar */
+/* Scrollbar — stone-ish */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-track { background: #1a1a1a; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 82, 255, 0.4);
-  border-radius: 4px;
+  background: var(--mc-stone);
+  border: 2px solid #000;
+  border-radius: 0;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(0, 82, 255, 0.7); }
+::-webkit-scrollbar-thumb:hover { background: var(--mc-stone-light); }
 
+/* ---- Minecraft title ("BASECRAFT" on the login screen) ---- */
+.mc-title {
+  font-family: 'Press Start 2P', ui-monospace, monospace;
+  font-size: clamp(28px, 6vw, 54px);
+  line-height: 1;
+  letter-spacing: 2px;
+  color: #ffffff;
+  text-shadow:
+    4px 4px 0 #3f3f3f,
+    8px 8px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* Yellow rotating splash tag — sits to the right of the title, rotated
+   slightly, wobbling subtly (like Minecraft's splash text). */
+.mc-splash {
+  display: inline-block;
+  font-family: 'Press Start 2P', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--mc-accent-yellow);
+  text-shadow: 2px 2px 0 #3a3000;
+  transform: rotate(-14deg);
+  transform-origin: center;
+  animation: mc-splash-wobble 0.9s ease-in-out infinite;
+}
+@keyframes mc-splash-wobble {
+  0%, 100% { transform: rotate(-14deg) scale(1); }
+  50%      { transform: rotate(-14deg) scale(1.08); }
+}
+
+/* ---- Stone button ---- */
 .bc-btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 font-medium transition;
-  background: linear-gradient(180deg, #0052ff, #003fcc);
-  color: #fff;
-  box-shadow: 0 0 24px rgba(0, 82, 255, 0.35);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 18px;
+  font-family: 'Press Start 2P', ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.55);
+  background-color: var(--mc-stone);
+  /* Subtle diagonal pixel noise so the stone doesn't look flat. */
+  background-image:
+    linear-gradient(135deg, rgba(255,255,255,0.06) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.06) 75%, transparent 75%);
+  background-size: 4px 4px;
+  border: 2px solid #000;
+  border-radius: 0;
+  box-shadow:
+    inset 2px 2px 0 var(--mc-stone-light),
+    inset -2px -2px 0 var(--mc-stone-dark);
+  cursor: pointer;
+  transition: none;
+  image-rendering: pixelated;
 }
-.bc-btn:hover { filter: brightness(1.1); }
-.bc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.bc-btn:hover:not(:disabled) {
+  background-color: #7d7d7d;
+  box-shadow:
+    inset 2px 2px 0 #bdbdbd,
+    inset -2px -2px 0 #454545;
+  /* Minecraft hover — text tints yellow */
+  color: var(--mc-accent-yellow);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+}
+.bc-btn:active:not(:disabled) {
+  box-shadow:
+    inset -2px -2px 0 var(--mc-stone-light),
+    inset 2px 2px 0 var(--mc-stone-dark);
+}
+.bc-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  color: #aaaaaa;
+}
 
+/* Dark variant (used for small secondary actions). */
+.bc-btn.bc-btn-dark {
+  background-color: #2f2f2f;
+  box-shadow:
+    inset 2px 2px 0 #555,
+    inset -2px -2px 0 #111;
+}
+.bc-btn.bc-btn-dark:hover:not(:disabled) {
+  background-color: #3a3a3a;
+}
+
+/* ---- Pixel input ---- */
 .bc-input {
-  @apply w-full rounded-lg bg-white/5 px-4 py-3 outline-none border border-white/10 transition;
-  color: #fff;
+  width: 100%;
+  padding: 12px 12px;
+  font-family: 'VT323', ui-monospace, monospace;
+  font-size: 20px;
+  letter-spacing: 1px;
+  color: #ffffff;
+  background: #000000;
+  border: 2px solid #a0a0a0;
+  border-radius: 0;
+  outline: none;
+}
+.bc-input::placeholder {
+  color: #777;
 }
 .bc-input:focus {
-  border-color: var(--base-blue);
-  box-shadow: 0 0 0 2px rgba(0, 82, 255, 0.35);
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px #000, 0 0 0 4px #ffffff;
+}
+.bc-input:disabled {
+  opacity: 0.55;
 }
 
+/* ---- Panel: dark, hard-edged, stone-bordered ---- */
 .bc-panel {
-  @apply rounded-xl border border-white/10 bg-black/40 backdrop-blur-md;
+  background: var(--mc-panel-bg);
+  border: 2px solid #000;
+  border-radius: 0;
+  box-shadow:
+    inset 2px 2px 0 #555,
+    inset -2px -2px 0 var(--mc-stone-darker),
+    0 0 0 2px #000;
+  backdrop-filter: none;
+}
+
+/* ---- Dirt-tiled background (login screen) ---- */
+.mc-dirt-bg {
+  background-image: var(--mc-dirt-tile);
+  background-repeat: repeat;
+  background-size: 64px 64px; /* 16×4 — keep chunks readable */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 /* Chat fade */
@@ -78,21 +203,29 @@ canvas {
   opacity: 0;
 }
 
+/* ---- Hotbar ---- */
 .hotbar-slot {
   width: 54px;
   height: 54px;
-  border-radius: 10px;
-  border: 2px solid rgba(255,255,255,0.08);
-  background: rgba(0,0,0,0.45);
+  border-radius: 0;
+  border: 2px solid #000;
+  background: rgba(0, 0, 0, 0.6);
+  box-shadow:
+    inset 2px 2px 0 #555,
+    inset -2px -2px 0 #222;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 120ms, border-color 120ms;
+  image-rendering: pixelated;
 }
 .hotbar-slot.active {
-  border-color: #0052ff;
-  box-shadow: 0 0 18px rgba(0,82,255,0.6);
-  transform: translateY(-3px);
+  border-color: #ffffff;
+  box-shadow:
+    inset 2px 2px 0 #fff,
+    inset -2px -2px 0 #aaa,
+    0 0 0 2px #000;
+  transform: translateY(-2px);
 }
 
 /* Modern 4-dot crosshair — neutral white dots read well over grass AND snow */
@@ -130,18 +263,22 @@ canvas {
 .crosshair-dot.left { left: 0; top: 50%; transform: translateY(-50%); }
 .crosshair-dot.right { right: 0; top: 50%; transform: translateY(-50%); }
 
-/* HUD pills */
+/* HUD pills — kept neutral/dark to match the pixel UI */
 .hud-pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  border: 1px solid rgba(74, 124, 255, 0.35);
-  backdrop-filter: blur(6px);
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.85);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid #000;
+  box-shadow:
+    inset 1px 1px 0 #555,
+    inset -1px -1px 0 #222;
+  font-family: 'VT323', ui-monospace, monospace;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.9);
 }
 .hud-pill-dot {
   width: 7px;
@@ -165,19 +302,4 @@ canvas {
   10%  { opacity: 1; transform: translate(-50%, 0); }
   85%  { opacity: 1; transform: translate(-50%, 0); }
   100% { opacity: 0; transform: translate(-50%, -4px); }
-}
-
-/* Login screen parallax dots */
-.login-dot {
-  position: absolute;
-  background: rgba(74, 124, 255, 0.5);
-  border-radius: 50%;
-  pointer-events: none;
-  animation: login-drift 24s linear infinite;
-}
-@keyframes login-drift {
-  0% { transform: translate(0, 0); opacity: 0; }
-  10% { opacity: 0.8; }
-  90% { opacity: 0.8; }
-  100% { transform: translate(40px, -60px); opacity: 0; }
 }
