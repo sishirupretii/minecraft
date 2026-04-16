@@ -37,6 +37,8 @@ export default function Game({ username, walletAddress }: Props) {
   const [selfColor, setSelfColor] = useState<string>('#0052FF');
   const [error, setError] = useState<string | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [webglError, setWebglError] = useState<string | null>(null);
 
   // Track refs so callbacks use fresh values without re-binding
   useEffect(() => {
@@ -58,6 +60,26 @@ export default function Game({ username, walletAddress }: Props) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Test WebGL support before doing anything heavy; bail with a clear message
+    // if the user's browser can't render. Otherwise they'd just see a black canvas.
+    try {
+      const testCtx =
+        canvas.getContext('webgl2') ||
+        canvas.getContext('webgl') ||
+        canvas.getContext('experimental-webgl');
+      if (!testCtx) {
+        setWebglError(
+          'WebGL is not available in your browser. Try Chrome, Firefox, or Edge, and enable hardware acceleration.',
+        );
+        return;
+      }
+    } catch (err) {
+      setWebglError(
+        `Could not initialize WebGL: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
 
     // ---- Three.js scene ----
     const scene = new THREE.Scene();
@@ -225,11 +247,13 @@ export default function Game({ username, walletAddress }: Props) {
 
     const onConnect = () => {
       console.log('[socket] connected', socket.id);
+      setSocketConnected(true);
       socket.emit('join', { username, walletAddress });
     };
 
     const onDisconnect = (reason: string) => {
       console.log('[socket] disconnected', reason);
+      setSocketConnected(false);
       appendChat({ username: 'system', message: `Disconnected: ${reason}. Reconnecting…`, isSystem: true });
     };
 
@@ -436,7 +460,16 @@ export default function Game({ username, walletAddress }: Props) {
   }, [chatOpen]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-black">
+    <div
+      className="relative h-screen w-screen overflow-hidden"
+      style={{
+        // Fall back to the sky's horizon color so there's never a pure-black
+        // flash between mount and the first WebGL frame — and so WebGL
+        // failures show a blue backdrop behind the error instead of black.
+        background:
+          'linear-gradient(180deg, #1a3ea8 0%, #6a95e6 100%)',
+      }}
+    >
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
 
       <HUD
@@ -474,6 +507,47 @@ export default function Game({ username, walletAddress }: Props) {
       <div className="pointer-events-none absolute bottom-20 left-1/2 -translate-x-1/2 rounded bg-black/50 px-2 py-0.5 text-xs text-white/80 backdrop-blur-sm">
         {BLOCKS[BLOCK_TYPES[selectedBlock]].label}
       </div>
+
+      {/* WebGL fatal error — tell the user explicitly why the game is blank */}
+      {webglError && (
+        <div className="pointer-events-auto absolute inset-0 flex items-center justify-center p-6">
+          <div className="max-w-md rounded-xl border border-red-400/40 bg-black/80 p-6 text-center shadow-2xl">
+            <div className="mb-2 text-lg font-bold text-red-300">Can't start BaseCraft</div>
+            <div className="text-sm text-white/80">{webglError}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading overlay — visible until socket is connected AND world:complete fires.
+          Without this, the user sees an empty blue canvas for 5-30s after clicking
+          "Enter World" and assumes the game is broken. */}
+      {!webglError && (!socketConnected || !worldLoaded) && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0a0e27]/80 backdrop-blur-sm">
+          <div className="rounded-xl border border-white/20 bg-black/50 px-8 py-6 text-center shadow-2xl">
+            <div className="mb-3 text-2xl font-bold text-[#4a7cff]">BaseCraft</div>
+            {!socketConnected ? (
+              <>
+                <div className="text-sm text-white/80">Connecting to server…</div>
+                <div className="mt-1 text-xs text-white/40">
+                  First connect can take ~30s while the world wakes up.
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm text-white/80">Loading world…</div>
+                <div className="mt-1 text-xs text-white/40">
+                  {loadedBlocks.toLocaleString()} blocks loaded
+                </div>
+              </>
+            )}
+            <div className="mt-4 flex justify-center">
+              <div className="h-1 w-32 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-[#0052FF]" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Click-to-play overlay — shown when the mouse isn't captured.
           Clicking the canvas itself engages pointer lock (see Player.bindEvents),
