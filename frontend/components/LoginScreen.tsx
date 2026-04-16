@@ -141,11 +141,55 @@ export default function LoginScreen({ onLogin }: Props) {
             </div>
 
             <div className="flex flex-col gap-2">
-              <ConnectButton
-                accountStatus="address"
-                chainStatus="icon"
-                showBalance={false}
-              />
+              {/*
+                Custom Connect button — the default RainbowKit button shows a
+                grey pill that clashes with the agentcraft.fun look. We render
+                our own full-width blue `.bc-btn` that tunnels into the same
+                RainbowKit modals.
+              */}
+              <ConnectButton.Custom>
+                {({ account, chain, openConnectModal, openAccountModal, openChainModal, mounted }) => {
+                  const ready = mounted;
+                  const connected = ready && account && chain;
+                  if (!connected) {
+                    return (
+                      <button
+                        className="bc-btn w-full"
+                        onClick={openConnectModal}
+                        disabled={loading}
+                      >
+                        Connect Wallet
+                      </button>
+                    );
+                  }
+                  if (chain.unsupported) {
+                    return (
+                      <button
+                        className="bc-btn w-full"
+                        onClick={openChainModal}
+                        disabled={loading}
+                        style={{ background: '#7a2a2a' }}
+                      >
+                        Wrong Network — Switch
+                      </button>
+                    );
+                  }
+                  return (
+                    <button
+                      className="bc-btn w-full"
+                      onClick={openAccountModal}
+                      disabled={loading}
+                      style={{
+                        background:
+                          'linear-gradient(180deg, #14204a 0%, #0b1332 100%)',
+                      }}
+                    >
+                      <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[#4a7cff] align-middle" />
+                      {account.displayName}
+                    </button>
+                  );
+                }}
+              </ConnectButton.Custom>
               {isConnected && address && (
                 <>
                   <button

@@ -8,6 +8,7 @@ import { getAudio } from '@/lib/audio';
 import { WorldRenderer } from './World';
 import { PlayerController } from './Player';
 import { OtherPlayersManager } from './OtherPlayers';
+import { CowManager } from './Cows';
 import Hotbar from './Hotbar';
 import Chat, { ChatMsg } from './Chat';
 import HUD from './HUD';
@@ -312,6 +313,34 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       0.1,
       500,
     );
+    // Add the camera to the scene graph so objects parented to it (the
+    // first-person hand) actually render.
+    scene.add(camera);
+
+    // ---- First-person "hand" holding the selected block ----
+    // A small cube pinned to the camera at lower-right. Its color tracks the
+    // currently-selected hotbar slot, and we swing it on break/place for the
+    // classic Minecraft punch feel. Not a tool sprite, but reads as "holding
+    // the block you're about to place", which is what the user actually wants.
+    const handGeom = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+    const handMat = new THREE.MeshStandardMaterial({
+      color: BLOCKS[BLOCK_TYPES[0]].color,
+      roughness: 0.85,
+      metalness: 0,
+    });
+    const hand = new THREE.Mesh(handGeom, handMat);
+    hand.castShadow = false;
+    hand.receiveShadow = false;
+    // Base resting pose — rotation values chosen so three faces of the cube
+    // are visible to the camera (not a flat square).
+    const HAND_REST_POS = new THREE.Vector3(0.45, -0.45, -0.9);
+    const HAND_REST_ROT = new THREE.Euler(-0.25, -0.35, 0);
+    hand.position.copy(HAND_REST_POS);
+    hand.rotation.copy(HAND_REST_ROT);
+    camera.add(hand);
+
+    // Swing animation state. Infinity means "rest"; 0 means "just triggered".
+    let handSwingTime = Infinity;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -363,9 +392,10 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     water.receiveShadow = true;
     scene.add(water);
 
-    // World + players
+    // World + players + cows (cows are purely local, no networking)
     const world = new WorldRenderer(scene);
     const others = new OtherPlayersManager(scene);
+    const cows = new CowManager(scene, world);
 
     // ---- Break particles ----
     type Particle = {
@@ -512,6 +542,9 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
 
     const onWorldComplete = () => {
       setWorldLoaded(true);
+      // Spawn a small herd once the world is fully loaded so cows can
+      // actually find ground to stand on.
+      cows.spawn(8, 64, 64, 32);
     };
 
     const onPlayerJoined = (p: { id: string; username: string; color: string; x: number; y: number; z: number }) => {
@@ -531,15 +564,20 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     };
 
     const onBlockUpdated = (p: { x: number; y: number; z: number; type: BlockType | null; placedBy?: string }) => {
+      // Idempotent: if we already optimistically applied this edit (because
+      // WE caused it), both branches short-circuit and we don't double-play
+      // the audio.
       if (p.type === null) {
-        // Remember the block's type *before* the renderer forgets it, so we
-        // can pass the right voice to the audio engine.
         const wasType = world.getType(p.x, p.y, p.z);
-        world.removeBlock(p.x, p.y, p.z, true);
-        if (wasType) audio.playBlockBreak(wasType);
+        if (wasType) {
+          world.removeBlock(p.x, p.y, p.z, true);
+          audio.playBlockBreak(wasType);
+        }
       } else {
-        world.addBlock(p.x, p.y, p.z, p.type, true);
-        audio.playBlockPlace(p.type);
+        if (!world.has(p.x, p.y, p.z)) {
+          world.addBlock(p.x, p.y, p.z, p.type, true);
+          audio.playBlockPlace(p.type);
+        }
       }
     };
 
@@ -603,16 +641,23 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       }
     };
     player.onBreak = (x, y, z) => {
-      // Play the break sound locally for instant feedback even before the
-      // server round-trips. Remote players will hear it via onBlockUpdated.
+      // Optimistic removal — don't wait for the server round-trip. The server
+      // echoes a `block:updated` back which is idempotent against our state
+      // (see onBlockUpdated below), so we never double-act.
       const t = world.getType(x, y, z);
-      if (t) audio.playBlockBreak(t);
+      if (t) {
+        audio.playBlockBreak(t);
+        world.removeBlock(x, y, z, true);
+      }
       socket.emit('block:break', { x, y, z });
+      handSwingTime = 0;
     };
     player.onPlace = (x, y, z) => {
       const type = BLOCK_TYPES[selectedRef.current];
       audio.playBlockPlace(type);
+      world.addBlock(x, y, z, type, true); // optimistic
       socket.emit('block:place', { x, y, z, type });
+      handSwingTime = 0;
     };
 
     // ---- Day/night palette lerp targets ----
@@ -664,6 +709,7 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       elapsed += dt;
       player.update(dt);
       others.update(dt);
+      cows.update(dt);
       world.update();
 
       // ---- Day/night math ----
@@ -765,6 +811,27 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       // Ambient wind: louder up high
       const altitudeWind = Math.max(0, Math.min(1, (camera.position.y - 15) / 30));
       audio.setAmbientWind(altitudeWind);
+
+      // ---- Hand: track selected block color + run swing animation ----
+      const selType = BLOCK_TYPES[selectedRef.current];
+      handMat.color.setHex(BLOCKS[selType].color);
+      if (handSwingTime !== Infinity) {
+        handSwingTime += dt;
+        const swingDur = 0.25;
+        if (handSwingTime >= swingDur) {
+          handSwingTime = Infinity;
+          hand.position.copy(HAND_REST_POS);
+          hand.rotation.copy(HAND_REST_ROT);
+        } else {
+          const t = handSwingTime / swingDur;
+          // Sine bell: 0 → 1 → 0 over the duration
+          const swing = Math.sin(t * Math.PI);
+          hand.rotation.x = HAND_REST_ROT.x - swing * 0.9;
+          hand.rotation.z = HAND_REST_ROT.z + swing * 0.25;
+          hand.position.y = HAND_REST_POS.y - swing * 0.18;
+          hand.position.z = HAND_REST_POS.z + swing * 0.1;
+        }
+      }
 
       // Block highlight pulse
       const target = world.raycast(camera, 5);
@@ -875,6 +942,7 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       player.dispose();
       playerRef.current = null;
       others.clear();
+      cows.clear();
       world.dispose();
       for (const p of particles) {
         scene.remove(p.mesh);
@@ -882,6 +950,9 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       }
       particles.length = 0;
       particleGeom.dispose();
+      camera.remove(hand);
+      handGeom.dispose();
+      handMat.dispose();
       cloudTexture.dispose();
       cloudMat.dispose();
       cloudMesh.geometry.dispose();

@@ -4,6 +4,12 @@ import { Block, BlockType, WORLD_HEIGHT, WORLD_SIZE } from './types';
 
 type Key = string; // "x,y,z"
 
+// Bump this any time world-gen changes in a way that makes stored blocks
+// invalid (e.g. new biome scheme, different block types). On startup, if
+// the persisted world_meta.version doesn't match, we wipe the blocks table
+// and regenerate from scratch. v2 = biomes (plains / desert / snow).
+const WORLD_VERSION = 2;
+
 function k(x: number, y: number, z: number): Key {
   return `${x},${y},${z}`;
 }
@@ -29,11 +35,28 @@ class WorldStore {
       console.error('[world] Meta check failed:', metaErr.message);
     }
 
-    if (meta?.value?.generated) {
-      console.log('[world] Loading existing blocks from Supabase...');
+    // Legacy rows wrote `{ generated: true }` without a version — treat that
+    // as version 1. Anything else is whatever it claims to be.
+    const storedVersion: number =
+      typeof meta?.value?.version === 'number' ? meta.value.version : meta?.value?.generated ? 1 : 0;
+    const alreadyGenerated = !!meta?.value?.generated;
+    const versionMatches = alreadyGenerated && storedVersion === WORLD_VERSION;
+
+    if (versionMatches) {
+      console.log(`[world] Loading existing blocks from Supabase (v${storedVersion})...`);
       await this.loadFromDb();
     } else {
-      console.log('[world] Generating new world...');
+      if (alreadyGenerated) {
+        console.log(
+          `[world] Version mismatch (db v${storedVersion}, code v${WORLD_VERSION}). Wiping and regenerating...`,
+        );
+        // Delete every row. Supabase refuses an unqualified delete, so we
+        // filter on a predicate that's always true for real rows.
+        const { error: wipeErr } = await supabase.from('blocks').delete().gte('x', -1);
+        if (wipeErr) console.error('[world] Wipe failed:', wipeErr.message);
+      } else {
+        console.log('[world] Generating new world...');
+      }
       const generated = generateWorld(1337);
       this.spawnPoint = computeSpawnPoint(generated);
       for (const b of generated) {
@@ -42,9 +65,14 @@ class WorldStore {
       await this.persistInitial(generated);
       await supabase.from('world_meta').upsert({
         key: 'generated',
-        value: { generated: true, at: new Date().toISOString(), spawn: this.spawnPoint },
+        value: {
+          generated: true,
+          version: WORLD_VERSION,
+          at: new Date().toISOString(),
+          spawn: this.spawnPoint,
+        },
       });
-      console.log(`[world] Generated ${generated.length} blocks.`);
+      console.log(`[world] Generated ${generated.length} blocks (v${WORLD_VERSION}).`);
     }
 
     // Load spawn from meta (in case world was generated previously)
