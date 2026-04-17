@@ -81,6 +81,7 @@ import AchievementPanel from './panels/AchievementPanel';
 import LandClaimPanel from './panels/LandClaimPanel';
 import TierPerksPanel from './panels/TierPerksPanel';
 import ControlsPanel from './panels/ControlsPanel';
+import StorePanel, { StoreConfig } from './panels/StorePanel';
 import SettingsPanel from './panels/SettingsPanel';
 import BountyBoard from './panels/BountyBoard';
 import Minimap from './Minimap';
@@ -198,6 +199,11 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [controlsOpen, setControlsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bountyBoardOpen, setBountyBoardOpen] = useState(false);
+  // Store (on-chain purchases)
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [storeConfig, setStoreConfig] = useState<StoreConfig | null>(null);
+  const [storeHistory, setStoreHistory] = useState<Array<{ tx_hash: string; item_id: string; item_count: number; token_amount: string; created_at: string; delivered: boolean }>>([]);
+  const [storeResult, setStoreResult] = useState<{ ok: boolean; reason?: string; label?: string } | null>(null);
   const [gameVolume, setGameVolume] = useState(1.0);
   const [gameFov, setGameFov] = useState(75);
   const [renderDist, setRenderDist] = useState(90);
@@ -1685,6 +1691,27 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const onLandDoClaim = (p: { chunkX: number; chunkZ: number }) => socket.emit('land:claim', p);
     const onLandDoUnclaim = (p: { chunkX: number; chunkZ: number }) => socket.emit('land:unclaim', p);
 
+    // Store socket handlers
+    const onStoreConfig = (cfg: any) => setStoreConfig(cfg);
+    const onStorePurchases = (rows: any[]) => setStoreHistory(rows || []);
+    const onStoreResult = (result: any) => {
+      if (result?.ok && result?.gameItem && result?.count) {
+        const inv = addItem(inventoryRef.current, result.gameItem as ItemType, result.count);
+        inventoryRef.current = inv;
+        setInventory(inv);
+        setStoreResult({ ok: true, label: `${result.count}x ${result.label}` });
+        setToast(`🛒 Purchase delivered: ${result.count}x ${result.label}`);
+        setTimeout(() => setToast(null), 4000);
+        // Refresh history
+        socket.emit('store:purchases');
+      } else {
+        setStoreResult({ ok: false, reason: result?.reason ?? 'Purchase failed' });
+      }
+    };
+    socket.on('store:config', onStoreConfig);
+    socket.on('store:purchases', onStorePurchases);
+    socket.on('store:result', onStoreResult);
+
     socket.on('leaderboard:data', onLeaderboardData);
     socket.on('achievement:data', onAchievementData);
     socket.on('land:data', onLandData);
@@ -1701,6 +1728,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     // Request achievements on connect
     setTimeout(() => { socket.emit('achievement:list'); }, 2000);
+    setTimeout(() => { socket.emit('store:config'); socket.emit('store:purchases'); }, 2500);
 
     const refreshInterval = setInterval(refreshOnlineList, 1000);
 
@@ -4839,6 +4867,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       if (e.key.toLowerCase() === 'b') {
         setBountyBoardOpen(v => !v);
       }
+      if (e.key.toLowerCase() === 'u') {
+        // Open store; fetch latest config + history
+        setStoreOpen(v => {
+          const next = !v;
+          if (next) {
+            const s = getSocket();
+            s.emit('store:config');
+            s.emit('store:purchases');
+          }
+          return next;
+        });
+      }
       if (e.key.toLowerCase() === 'm') {
         setShowMinimap(v => !v);
       }
@@ -4893,6 +4933,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       socket.off('player:teleport', onTeleport);
       socket.off('chat:welcome', onWelcome);
       socket.off('leaderboard:data', onLeaderboardData);
+      socket.off('store:config', onStoreConfig);
+      socket.off('store:purchases', onStorePurchases);
+      socket.off('store:result', onStoreResult);
       socket.off('achievement:data', onAchievementData);
       socket.off('land:data', onLandData);
       socket.off('land:claimed', onLandClaimed);
@@ -5991,6 +6034,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'store' || cmd === 'shop' || cmd === 'buy') {
+              const s = getSocket();
+              s.emit('store:config');
+              s.emit('store:purchases');
+              setStoreOpen(true);
+              return;
+            }
+
             if (cmd === 'coins' || cmd === 'basecoins') {
               const c = statsRef.current.baseCoinsCollected ?? 0;
               appendChat({ username: 'system', message: `⬢ Base Coins collected: ${c} | Mine cobblestone/bricks for a chance at hidden coins`, isSystem: true });
@@ -6271,6 +6322,21 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         mobsKilled={statsRef.current.mobsKilled}
         walletConnected={!!walletAddress}
         currentTier={balanceTier}
+      />
+
+      <StorePanel
+        visible={storeOpen}
+        onClose={() => setStoreOpen(false)}
+        config={storeConfig}
+        history={storeHistory}
+        walletConnected={!!walletAddress}
+        lastResult={storeResult}
+        onClearResult={() => setStoreResult(null)}
+        onBuyStart={(itemId, txHash) => {
+          const s = getSocket();
+          s.emit('store:verify', { txHash, itemId });
+          setStoreResult(null);
+        }}
       />
 
       {/* WebGL error */}

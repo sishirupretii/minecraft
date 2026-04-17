@@ -12,6 +12,7 @@ import {
   WORLD_HEIGHT,
   WORLD_SIZE,
 } from './types';
+import { verifyPurchase, recordPurchase, publicStoreConfig, getItem } from './store';
 
 const players: Map<string, PlayerState> = new Map();
 const lastMoveBroadcast: Map<string, number> = new Map();
@@ -480,6 +481,70 @@ export function registerSocketHandlers(io: Server) {
       } catch (err) {
         console.error('[achievement] err:', err);
         socket.emit('achievement:data', []);
+      }
+    });
+
+    // ---- Store ----
+    socket.on('store:config', () => {
+      socket.emit('store:config', publicStoreConfig());
+    });
+
+    socket.on('store:purchases', async () => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      try {
+        const { data } = await supabase
+          .from('purchases')
+          .select('tx_hash, item_id, item_count, token_amount, created_at, delivered')
+          .eq('username', self.username)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        socket.emit('store:purchases', data ?? []);
+      } catch (err) {
+        console.error('[store:purchases] err:', err);
+        socket.emit('store:purchases', []);
+      }
+    });
+
+    socket.on('store:verify', async (p: { txHash: string; itemId: string }) => {
+      const self = players.get(socket.id);
+      if (!self) {
+        socket.emit('store:result', { ok: false, reason: 'Not connected' });
+        return;
+      }
+      if (!p?.txHash || !p?.itemId) {
+        socket.emit('store:result', { ok: false, reason: 'Missing txHash or itemId' });
+        return;
+      }
+      try {
+        const result = await verifyPurchase(p.txHash, p.itemId);
+        if (!result.ok || !result.item || !result.buyer || !result.amount) {
+          socket.emit('store:result', { ok: false, reason: result.reason ?? 'Verification failed', txHash: p.txHash });
+          return;
+        }
+        const inserted = await recordPurchase({
+          txHash: p.txHash,
+          username: self.username,
+          buyer: result.buyer,
+          item: result.item,
+          amount: result.amount,
+        });
+        if (!inserted) {
+          socket.emit('store:result', { ok: false, reason: 'Failed to record purchase (possibly already redeemed)', txHash: p.txHash });
+          return;
+        }
+        // Grant item to player — client adds to inventory on receipt
+        socket.emit('store:result', {
+          ok: true,
+          txHash: p.txHash,
+          itemId: result.item.id,
+          gameItem: result.item.gameItem,
+          count: result.item.count,
+          label: result.item.label,
+        });
+      } catch (err: any) {
+        console.error('[store:verify] err:', err);
+        socket.emit('store:result', { ok: false, reason: `Server error: ${err?.message ?? 'unknown'}`, txHash: p.txHash });
       }
     });
 
