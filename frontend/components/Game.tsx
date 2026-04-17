@@ -2185,17 +2185,49 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             setTimeout(() => setToast(null), 3000);
             return;
           }
-          // Lever: toggle on/off
+          // Lever: toggle on/off + activate nearby redstone lamps
           if (bt === 'lever') {
             const key = `${hit.x},${hit.y},${hit.z}`;
-            if (leverStatesRef.current.has(key)) {
+            const wasOn = leverStatesRef.current.has(key);
+            if (wasOn) {
               leverStatesRef.current.delete(key);
               setToast('⚡ Lever: OFF');
             } else {
               leverStatesRef.current.add(key);
               setToast('⚡ Lever: ON');
             }
+            // Toggle nearby redstone lamps (within 3 blocks)
+            for (let ldx = -3; ldx <= 3; ldx++) {
+              for (let ldy = -2; ldy <= 2; ldy++) {
+                for (let ldz = -3; ldz <= 3; ldz++) {
+                  const lampType = world.getType(hit.x + ldx, hit.y + ldy, hit.z + ldz);
+                  if (lampType === 'redstone_lamp') {
+                    // Toggle lamp brightness via emissive (visual cue)
+                    const lampKey = `lamp_${hit.x + ldx},${hit.y + ldy},${hit.z + ldz}`;
+                    if (!wasOn) {
+                      leverStatesRef.current.add(lampKey);
+                    } else {
+                      leverStatesRef.current.delete(lampKey);
+                    }
+                  }
+                }
+              }
+            }
             audio.playBlockPlace('stone_bricks');
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+          // Redstone lamp: right-click to toggle
+          if (bt === 'redstone_lamp') {
+            const lampKey = `lamp_${hit.x},${hit.y},${hit.z}`;
+            if (leverStatesRef.current.has(lampKey)) {
+              leverStatesRef.current.delete(lampKey);
+              setToast('💡 Lamp: OFF');
+            } else {
+              leverStatesRef.current.add(lampKey);
+              setToast('💡 Lamp: ON');
+            }
+            audio.playBlockPlace('glass');
             setTimeout(() => setToast(null), 1500);
             return;
           }
@@ -2606,8 +2638,35 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       for (const [mgr, mobName] of managersWithNames) {
         const mob = mgr.hitTest(origin, camDir, 4);
         if (mob) {
-          const drops = mgr.dealDamage(mob, damage);
+          // Critical hit: falling + attacking = 1.5x damage + particles
+          const isCritical = player.velocity.y < -0.5 && Math.abs(player.velocity.y) > 0.1;
+          const finalDamage = isCritical ? Math.floor(damage * 1.5) : damage;
+          const drops = mgr.dealDamage(mob, finalDamage);
           audio.playMobHurt();
+          // Critical hit golden sparkle particles
+          if (isCritical) {
+            for (let ci = 0; ci < 8; ci++) {
+              const critMat = new THREE.MeshBasicMaterial({
+                color: 0xffdd00, transparent: true, opacity: 0.9,
+              });
+              const critMesh = new THREE.Mesh(particleGeom, critMat);
+              critMesh.position.copy(mob.group.position);
+              critMesh.position.y += 1;
+              critMesh.castShadow = false;
+              scene.add(critMesh);
+              particles.push({
+                mesh: critMesh,
+                velocity: new THREE.Vector3(
+                  (Math.random() - 0.5) * 3,
+                  1 + Math.random() * 2,
+                  (Math.random() - 0.5) * 3,
+                ),
+                age: 0, life: 0.5 + Math.random() * 0.3,
+              });
+            }
+            setToast('💥 Critical Hit!');
+            setTimeout(() => setToast(null), 1000);
+          }
           if (drops) {
             let inv = inventoryRef.current;
             for (const drop of drops) {
@@ -2652,7 +2711,15 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               audio.playKillStreak();
               setTimeout(() => setToast(null), 3000);
             }
-            const mobXp = Math.round(5 * TIER_XP_MULTIPLIER[balanceTier] * streakBonus);
+            // Mob-specific XP values (harder mobs = more XP)
+            const MOB_XP: Record<string, number> = {
+              'Cow': 3, 'Pig': 3, 'Chicken': 2, 'Fox': 3, 'Parrot': 2, 'Turtle': 3, 'Bat': 1,
+              'Zombie': 5, 'Skeleton': 7, 'Spider': 5, 'Creeper': 8, 'Slime': 4,
+              'Enderman': 10, 'Witch': 12, 'Blaze': 12, 'Phantom': 8, 'Ghast': 15,
+              'Iron Golem': 20, 'Warden': 50, 'Wolf': 3, 'Villager': 1,
+            };
+            const baseXp = MOB_XP[mobName] ?? 5;
+            const mobXp = Math.round(baseXp * TIER_XP_MULTIPLIER[balanceTier] * streakBonus * (isCritical ? 1.5 : 1));
             const newXp = totalXpRef.current + mobXp;
             totalXpRef.current = newXp;
             setTotalXp(newXp);

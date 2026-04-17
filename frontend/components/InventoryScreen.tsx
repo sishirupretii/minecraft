@@ -83,6 +83,15 @@ function ItemTooltip({ slot, x, y, enchantment }: { slot: InventorySlot; x: numb
           🛡 Blocks 50% damage
         </div>
       )}
+      {def.isTool && def.toolKind && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '11px', color: '#777', marginTop: '2px' }}>
+          {def.toolKind === 'pickaxe' && '⛏ Best for: stone, ores, bricks'}
+          {def.toolKind === 'axe' && '🪓 Best for: wood, planks, logs'}
+          {def.toolKind === 'shovel' && '⛏ Best for: dirt, sand, gravel'}
+          {def.toolKind === 'hoe' && '🌾 Right-click dirt to till farmland'}
+          {def.toolKind === 'sword' && '⚔ 1.5x damage to mobs'}
+        </div>
+      )}
       {enchantment && (
         <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#aa44ff' }}>
           ✨ {enchantment}
