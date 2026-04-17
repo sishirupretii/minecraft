@@ -292,6 +292,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   // ---- Creeper proximity warning ----
   const [creeperNear, setCreeperNear] = useState(false);
   const creeperNearRef = useRef(false);
+  // ---- Custom home points (wallet-gated) ----
+  const customHomesRef = useRef<Map<string, { x: number; y: number; z: number }>>(new Map());
+  // ---- Freezing effect in snowy biomes ----
+  const [freezing, setFreezing] = useState(0); // 0..1 frost intensity
+  const freezingRef = useRef(0);
+  // ---- Low health heartbeat ----
+  const lastHeartbeatRef = useRef(0);
   // ---- Daily challenge (wallet-exclusive) ----
   const [dailyChallenge, setDailyChallenge] = useState<{
     type: string; target: number; current: number; reward: string; completed: boolean;
@@ -1010,6 +1017,31 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       setHealth(Math.round(healthFloat));
       hurtFlashTimer = 0.3;
       setDeathCause('Tried to swim in lava');
+      // Fire particles rising from player
+      for (let fp = 0; fp < 6; fp++) {
+        const fireMat = new THREE.MeshBasicMaterial({
+          color: Math.random() > 0.5 ? 0xff4400 : 0xffaa00,
+          transparent: true, opacity: 0.8,
+        });
+        const fm = new THREE.Mesh(particleGeom, fireMat);
+        fm.position.set(
+          camera.position.x + (Math.random() - 0.5) * 0.6,
+          camera.position.y - 0.5 + Math.random() * 0.3,
+          camera.position.z + (Math.random() - 0.5) * 0.6,
+        );
+        fm.castShadow = false;
+        scene.add(fm);
+        particles.push({
+          mesh: fm,
+          velocity: new THREE.Vector3(
+            (Math.random() - 0.5) * 0.5,
+            2 + Math.random() * 2,
+            (Math.random() - 0.5) * 0.5,
+          ),
+          age: 0,
+          life: 0.5 + Math.random() * 0.3,
+        });
+      }
     };
 
     // Tool-aware break speed: return the held item's ItemDef if it's a tool.
@@ -3624,6 +3656,55 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         }
       }
 
+      // ---- Freezing in snowy biomes ----
+      if (currentBiomeRef.current === 'Snowy Tundra') {
+        // Gradually freeze if in snowy biome without fire resistance
+        if (potionTypeRef.current !== 'potion_fire_resist') {
+          freezingRef.current = Math.min(1, freezingRef.current + dt * 0.02);
+        } else {
+          freezingRef.current = Math.max(0, freezingRef.current - dt * 0.1);
+        }
+        // Apply cold damage at high freeze (every 3 seconds at full frost)
+        if (freezingRef.current > 0.8 && Math.random() < dt * 0.33) {
+          const coldDmg = applyArmorReduction(1, armorRef.current);
+          healthFloat = Math.max(0, healthFloat - coldDmg);
+          setToast('🥶 Freezing! Find warmth or use fire resistance');
+        }
+      } else {
+        // Thaw quickly when not in snowy biome
+        freezingRef.current = Math.max(0, freezingRef.current - dt * 0.15);
+      }
+      // Near campfire/torch/furnace → thaw faster
+      if (freezingRef.current > 0) {
+        const px = Math.floor(camera.position.x);
+        const pyy = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        for (let ddx = -2; ddx <= 2; ddx++) {
+          for (let ddy = -1; ddy <= 1; ddy++) {
+            for (let ddz = -2; ddz <= 2; ddz++) {
+              const wt = world.getType(px + ddx, pyy + ddy, pz + ddz);
+              if (wt === 'torch' || wt === 'campfire' || wt === 'furnace') {
+                freezingRef.current = Math.max(0, freezingRef.current - dt * 0.5);
+              }
+            }
+          }
+        }
+      }
+      // Update frost overlay state (throttled)
+      const frzRounded = Math.round(freezingRef.current * 20) / 20;
+      if (Math.abs(frzRounded - freezing) > 0.04) {
+        setFreezing(frzRounded);
+      }
+
+      // ---- Low health heartbeat ----
+      if (healthFloat > 0 && healthFloat <= 4) {
+        const hbInterval = healthFloat <= 2 ? 0.6 : 1.0;
+        if (elapsed - lastHeartbeatRef.current > hbInterval) {
+          lastHeartbeatRef.current = elapsed;
+          audio.playHeartbeat();
+        }
+      }
+
       // ---- Day/night visuals ----
       const sunsetWeight = Math.max(0, 1 - Math.abs(sy) * 4) * Math.max(0, 1 - Math.abs(sy));
 
@@ -3962,6 +4043,26 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 smokeMesh.castShadow = false;
                 scene.add(smokeMesh);
                 torchParticles.push({ mesh: smokeMesh, age: 0, life: 2.0 + Math.random(), baseY: ty + 1.0 });
+              }
+              // Enchanting table rune particles (magical purple sparkles orbiting)
+              if (world.getType(tx, ty, tz) === 'enchanting_table' && torchParticles.length < 50 && Math.random() < 0.5) {
+                const runeColors = [0xaa44ff, 0x8822dd, 0xcc66ff, 0x6611bb];
+                const runeMat = new THREE.MeshStandardMaterial({
+                  color: runeColors[Math.floor(Math.random() * runeColors.length)],
+                  emissive: 0xaa44ff, emissiveIntensity: 0.8,
+                  transparent: true, opacity: 0.8,
+                });
+                const runeMesh = new THREE.Mesh(torchParticleGeom, runeMat);
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 0.8 + Math.random() * 0.5;
+                runeMesh.position.set(
+                  tx + 0.5 + Math.cos(angle) * radius,
+                  ty + 0.8 + Math.random() * 0.5,
+                  tz + 0.5 + Math.sin(angle) * radius,
+                );
+                runeMesh.castShadow = false;
+                scene.add(runeMesh);
+                torchParticles.push({ mesh: runeMesh, age: 0, life: 1.5 + Math.random(), baseY: ty + 1.0 });
               }
               if (world.getType(tx, ty, tz) === 'torch' && torchParticles.length < 40) {
                 const tMat = new THREE.MeshStandardMaterial({
@@ -4402,6 +4503,19 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             background: 'radial-gradient(ellipse at center, rgba(10,40,80,0.35) 0%, rgba(5,20,60,0.55) 100%)',
             zIndex: 1,
             transition: 'opacity 0.3s ease',
+          }}
+        />
+      )}
+
+      {/* Frost overlay in snowy biomes */}
+      {freezing > 0.05 && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background: `radial-gradient(ellipse at center, rgba(180,220,255,${freezing * 0.15}) 0%, rgba(140,180,230,${freezing * 0.35}) 60%, rgba(100,150,210,${freezing * 0.5}) 100%)`,
+            zIndex: 1,
+            transition: 'opacity 0.5s ease',
+            boxShadow: `inset 0 0 ${40 + freezing * 60}px rgba(180,220,255,${freezing * 0.3})`,
           }}
         />
       )}
@@ -5084,8 +5198,96 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'sethome') {
+              // /sethome [name] — set custom home point (wallet required)
+              if (!walletAddress) {
+                appendChat({ username: 'system', message: '⛓️ Connect wallet to use /sethome', isSystem: true });
+                return;
+              }
+              const homeName = parts[1]?.toLowerCase() || 'default';
+              const p = playerRef.current;
+              if (p) {
+                const maxHomes = balanceTier === 'diamond' ? 5 : balanceTier === 'gold' ? 3 : balanceTier === 'silver' ? 2 : 1;
+                if (customHomesRef.current.size >= maxHomes && !customHomesRef.current.has(homeName)) {
+                  appendChat({ username: 'system', message: `❌ Max ${maxHomes} homes for ${tierInfo.label} tier`, isSystem: true });
+                  return;
+                }
+                customHomesRef.current.set(homeName, {
+                  x: Math.floor(p.position.x),
+                  y: Math.floor(p.position.y),
+                  z: Math.floor(p.position.z),
+                });
+                appendChat({ username: 'system', message: `🏠 Home "${homeName}" set at ${Math.floor(p.position.x)}, ${Math.floor(p.position.y)}, ${Math.floor(p.position.z)}`, isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'delhome') {
+              const homeName = parts[1]?.toLowerCase() || 'default';
+              if (customHomesRef.current.has(homeName)) {
+                customHomesRef.current.delete(homeName);
+                appendChat({ username: 'system', message: `🗑️ Home "${homeName}" deleted`, isSystem: true });
+              } else {
+                appendChat({ username: 'system', message: `❌ No home named "${homeName}"`, isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'homes') {
+              if (customHomesRef.current.size === 0) {
+                appendChat({ username: 'system', message: '🏠 No custom homes set. Use /sethome [name]', isSystem: true });
+              } else {
+                const homeList = Array.from(customHomesRef.current.entries())
+                  .map(([name, pos]) => `${name} (${pos.x}, ${pos.y}, ${pos.z})`)
+                  .join(', ');
+                appendChat({ username: 'system', message: `🏠 Homes: ${homeList}`, isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'gohome') {
+              // /gohome [name] — teleport to custom home (wallet required)
+              if (!walletAddress) {
+                appendChat({ username: 'system', message: '⛓️ Connect wallet to use /gohome', isSystem: true });
+                return;
+              }
+              const homeName = parts[1]?.toLowerCase() || 'default';
+              const homePos = customHomesRef.current.get(homeName);
+              if (homePos) {
+                playerRef.current?.setPosition(homePos.x, homePos.y + 1, homePos.z);
+                appendChat({ username: 'system', message: `🏠 Teleported to home "${homeName}"`, isSystem: true });
+              } else {
+                appendChat({ username: 'system', message: `❌ No home named "${homeName}". Use /homes to list`, isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'playtime') {
+              const s = statsRef.current;
+              const mins = Math.floor(s.playTimeSeconds / 60);
+              const hrs = Math.floor(mins / 60);
+              const remMins = mins % 60;
+              appendChat({ username: 'system', message: `⏱️ Play time: ${hrs}h ${remMins}m | Current life: ${Math.floor(s.currentLifeSeconds / 60)}m | Longest life: ${Math.floor(s.longestLifeSeconds / 60)}m`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'level' || cmd === 'lvl') {
+              appendChat({ username: 'system', message: `⭐ Level ${xpInfo.level} | XP: ${xpInfo.xpInLevel}/${xpInfo.xpToNext} (${Math.floor((xpInfo.xpInLevel / Math.max(1, xpInfo.xpToNext)) * 100)}%) | Tier bonus: ${TIER_XP_MULTIPLIER[balanceTier]}x`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'coords') {
+              // /coords — share your coordinates in chat
+              const p = playerRef.current;
+              if (p) {
+                const socket = getSocket();
+                socket.emit('chat:send', { message: `📍 I'm at ${Math.floor(p.position.x)}, ${Math.floor(p.position.y)}, ${Math.floor(p.position.z)} in ${currentBiomeRef.current}` });
+              }
+              return;
+            }
+
             if (cmd === 'help') {
-              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gm, /online, /me, /streak, /dist, /ach, /biome, /recipe, /help', isSystem: true });
+              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gm, /online, /me, /streak, /dist, /ach, /biome, /recipe, /sethome, /delhome, /homes, /gohome, /playtime, /level, /coords, /help', isSystem: true });
               return;
             }
 

@@ -857,6 +857,49 @@ export class AudioEngine {
     src.stop(now + 1.0);
   }
 
+  /** Low health heartbeat — double thump */
+  playHeartbeat() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Double-thump heartbeat (lub-dub)
+    for (let i = 0; i < 2; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(i === 0 ? 60 : 45, now + i * 0.15);
+      gain.gain.setValueAtTime(0.12, now + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.12);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(120, now);
+      osc.connect(filter).connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.15);
+      osc.stop(now + i * 0.15 + 0.15);
+    }
+  }
+
+  /** Freezing wind whistle */
+  playFreezingWind() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const buf = this.makeNoiseBuffer(0.6, true);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.Q.setValueAtTime(5, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.03, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    src.connect(filter).connect(gain).connect(this.masterGain!);
+    src.start(now);
+    src.stop(now + 0.6);
+  }
+
   dispose() {
     if (this.musicInterval) {
       clearInterval(this.musicInterval);

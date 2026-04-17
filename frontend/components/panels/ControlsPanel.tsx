@@ -51,6 +51,12 @@ const CONTROLS = [
     { key: '/fly', action: 'Toggle flight (Diamond)' },
     { key: '/gamemode', action: 'Switch mode (Diamond)' },
     { key: '/bal', action: 'Show wallet balance' },
+    { key: '/sethome', action: 'Set custom home (wallet)' },
+    { key: '/gohome', action: 'Teleport to home' },
+    { key: '/homes', action: 'List saved homes' },
+    { key: '/playtime', action: 'Show play time stats' },
+    { key: '/level', action: 'Show XP & level info' },
+    { key: '/coords', action: 'Share coords in chat' },
   ]},
   { category: 'OTHER', items: [
     { key: 'F3', action: 'Debug Info (Coords/FPS)' },
