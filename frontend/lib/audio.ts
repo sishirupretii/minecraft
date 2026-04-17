@@ -857,6 +857,99 @@ export class AudioEngine {
     src.stop(now + 1.0);
   }
 
+  /** Anvil metallic clang */
+  playAnvilUse() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Metallic strike
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(200, now + 0.15);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1200, now);
+    filter.Q.setValueAtTime(3, now);
+    osc.connect(filter).connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.3);
+    // Second harmonic
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1600, now);
+    osc2.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.05, now);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc2.connect(g2).connect(this.masterGain!);
+    osc2.start(now);
+    osc2.stop(now + 0.15);
+  }
+
+  /** Enchanting magical shimmer */
+  playEnchant() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Ascending magical tones
+    const notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+    for (let i = 0; i < notes.length; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(notes[i], now + i * 0.08);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.06, now + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.3);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.08);
+      osc.stop(now + i * 0.08 + 0.3);
+    }
+  }
+
+  /** Armor equip metallic click */
+  playArmorEquip() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(3000, now);
+    osc.frequency.exponentialRampToValueAtTime(1500, now + 0.04);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.04, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.08);
+  }
+
+  /** Villager trade hmm */
+  playVillagerTrade() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Villager "hmm" — two short sine tones
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.linearRampToValueAtTime(250, now + 0.15);
+    osc.frequency.linearRampToValueAtTime(180, now + 0.3);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.06, now);
+    gain.gain.linearRampToValueAtTime(0.08, now + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(400, now);
+    osc.connect(filter).connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.35);
+  }
+
   /** Low health heartbeat — double thump */
   playHeartbeat() {
     if (!this.ctx || this.muted) return;

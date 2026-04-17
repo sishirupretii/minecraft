@@ -2249,7 +2249,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                   }
                   inventoryRef.current = inv;
                   setInventory([...inv]);
-                  audio.playBlockBreak('iron_ore');
+                  audio.playAnvilUse();
                   setToast(`🔨 Repaired ${hDef.label} (+${restore} durability)`);
                 } else {
                   setToast('🔨 Need Iron Ingot to repair');
@@ -2407,7 +2407,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               setInventory(inv);
               villagers.markTraded(mob);
               statsRef.current.villagerTrades++;
-              audio.playBlockPlace('gold_ore');
+              audio.playVillagerTrade();
               setToast(`🤝 Traded: 1 Emerald → ${trade.label}`);
               setTimeout(() => setToast(null), 2500);
               return;
@@ -2446,7 +2446,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           // Take 3 damage (MC-style)
           healthRef.current = Math.max(0, healthRef.current - 3);
           setHealth(healthRef.current);
-          audio.playBlockPlace('enchanting_table');
+          audio.playEnchant();
           setToast('🌀 Teleported!');
           setTimeout(() => setToast(null), 1500);
           // Ender pearl teleport particles (purple sparkles at destination)
@@ -3579,6 +3579,34 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       if (curBreath !== breathRef.current) {
         breathRef.current = curBreath;
         setBreath(curBreath);
+      }
+
+      // ---- Drowning panic bubbles when low breath ----
+      if (curBreath <= 3 && curBreath > 0 && Math.random() < dt * 3) {
+        const bubbleCount = 4 - curBreath; // more bubbles as breath decreases
+        for (let bi = 0; bi < bubbleCount; bi++) {
+          const bubMat = new THREE.MeshBasicMaterial({
+            color: 0x88ccff, transparent: true, opacity: 0.5,
+          });
+          const bm = new THREE.Mesh(particleGeom, bubMat);
+          bm.position.set(
+            camera.position.x + (Math.random() - 0.5) * 0.5,
+            camera.position.y + (Math.random() - 0.5) * 0.3,
+            camera.position.z + (Math.random() - 0.5) * 0.5,
+          );
+          bm.castShadow = false;
+          scene.add(bm);
+          particles.push({
+            mesh: bm,
+            velocity: new THREE.Vector3(
+              (Math.random() - 0.5) * 0.5,
+              1.5 + Math.random(),
+              (Math.random() - 0.5) * 0.5,
+            ),
+            age: 0,
+            life: 0.8 + Math.random() * 0.4,
+          });
+        }
       }
 
       // ---- Hunger drain ----
