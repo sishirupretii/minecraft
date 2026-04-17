@@ -5143,7 +5143,12 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       className="relative h-screen w-screen overflow-hidden"
       style={{ background: 'linear-gradient(180deg, #1a3ea8 0%, #6a95e6 100%)' }}
     >
-      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full"
+        tabIndex={0}
+        style={{ outline: 'none' }}
+      />
 
       {/* Underwater blue tint overlay */}
       {breath < 10 && (
@@ -6293,20 +6298,32 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         </div>
       )}
 
-      {/* Click-to-play overlay */}
+      {/* Click-to-play overlay — explicitly clickable to engage pointer lock */}
       {!pointerLocked && !chatOpen && !inventoryOpen && !isDead && worldLoaded && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30">
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-black/30 cursor-pointer"
+          style={{ zIndex: 30 }}
+          onClick={() => {
+            // Manually request pointer lock — works even if previously released
+            const c = canvasRef.current;
+            if (c) {
+              try { c.requestPointerLock(); } catch {}
+              // Also focus the canvas so keyboard events reach it
+              c.focus();
+            }
+          }}
+        >
           <div className="bc-panel px-8 py-6 text-center">
             <div
               style={{
                 fontFamily: "'Press Start 2P', monospace",
-                fontSize: '14px',
-                color: '#fff',
+                fontSize: '16px',
+                color: '#ffff55',
                 textShadow: '2px 2px 0 rgba(0,0,0,0.7)',
                 marginBottom: '12px',
               }}
             >
-              CLICK TO PLAY
+              ▶ CLICK HERE TO PLAY ◀
             </div>
             <div
               className="space-y-1"
@@ -6320,10 +6337,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               <div><span style={{ color: '#ffff55' }}>MOUSE</span> — Look around</div>
               <div><span style={{ color: '#ffff55' }}>W A S D</span> — Move</div>
               <div><span style={{ color: '#ffff55' }}>SPACE</span> — Jump · <span style={{ color: '#ffff55' }}>SHIFT</span> — Sprint · <span style={{ color: '#ffff55' }}>CTRL</span> — Sneak</div>
-              <div><span style={{ color: '#ffff55' }}>HOLD LEFT CLICK</span> — Mine / Attack · <span style={{ color: '#ffff55' }}>RIGHT CLICK</span> — Place / Eat</div>
+              <div><span style={{ color: '#ff6666' }}>HOLD LEFT CLICK</span> — Mine / Attack · <span style={{ color: '#66ff66' }}>RIGHT CLICK</span> — Place / Eat</div>
               <div><span style={{ color: '#ffff55' }}>1-9</span> — Select slot · <span style={{ color: '#ffff55' }}>E</span> — Inventory/Craft</div>
               <div><span style={{ color: '#ffff55' }}>F</span> — Fly · <span style={{ color: '#ffff55' }}>T</span> — Chat</div>
               <div><span style={{ color: '#ffff55' }}>L</span> — Leaderboard · <span style={{ color: '#ffff55' }}>P</span> — Profile · <span style={{ color: '#ffff55' }}>J</span> — Achievements · <span style={{ color: '#ffff55' }}>N</span> — Land</div>
+              <div style={{ marginTop: '8px', color: '#88ddff', fontSize: '15px' }}>
+                Stuck? Press <span style={{ color: '#ffff55' }}>T</span> and type <span style={{ color: '#ffff55' }}>/unstuck</span> or <span style={{ color: '#ffff55' }}>/kit</span>
+              </div>
             </div>
           </div>
         </div>
