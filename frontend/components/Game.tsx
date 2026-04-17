@@ -1243,25 +1243,37 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
       player.setPosition(safeSp.x, safeSp.y, safeSp.z);
       player.velocity.set(0, 0, 0);
-      // Starter kit: pickaxe (to dig), axe, sword, and placeable blocks (to build)
+      // Starter kit: full toolkit so players can dig, build AND craft immediately
       let starterInv = inventoryRef.current;
       const hasPickaxe = starterInv.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
       if (!hasPickaxe) {
+        // Tools
         starterInv = addItem(starterInv, 'wooden_pickaxe', 1);
         starterInv = addItem(starterInv, 'wooden_axe', 1);
         starterInv = addItem(starterInv, 'wooden_sword', 1);
-        // Give 32 cobblestone and 32 planks so they can build immediately
+        starterInv = addItem(starterInv, 'wooden_shovel', 1);
+        // Crafting essentials (place these, stand near, press E)
+        starterInv = addItem(starterInv, 'crafting_table', 1);
+        starterInv = addItem(starterInv, 'furnace', 1);
+        starterInv = addItem(starterInv, 'chest', 1);
+        // Placeable blocks + fuel + materials for further crafting
         starterInv = addItem(starterInv, 'cobblestone', 32);
         starterInv = addItem(starterInv, 'planks', 32);
+        starterInv = addItem(starterInv, 'cyan_wood', 8);
+        starterInv = addItem(starterInv, 'coal', 16);
         starterInv = addItem(starterInv, 'torch', 16);
         starterInv = addItem(starterInv, 'bread', 8);
         inventoryRef.current = starterInv;
         setInventory(starterInv);
-        // One-time tutorial hint
+        // Tutorial hints, staggered
         setTimeout(() => {
           setToast('⛏️ LEFT-CLICK and HOLD to mine  •  RIGHT-CLICK to place blocks');
           setTimeout(() => setToast(null), 6000);
         }, 2000);
+        setTimeout(() => {
+          setToast('🔨 Place crafting_table, stand near it, press E to craft');
+          setTimeout(() => setToast(null), 6000);
+        }, 9000);
       }
       setInvulnerable(true);
       invulnerableRef.current = true;
@@ -5001,9 +5013,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         starterInv = addItem(starterInv, 'wooden_pickaxe', 1);
         starterInv = addItem(starterInv, 'wooden_axe', 1);
         starterInv = addItem(starterInv, 'wooden_sword', 1);
+        starterInv = addItem(starterInv, 'wooden_shovel', 1);
+        starterInv = addItem(starterInv, 'crafting_table', 1);
+        starterInv = addItem(starterInv, 'furnace', 1);
         starterInv = addItem(starterInv, 'cobblestone', 32);
         starterInv = addItem(starterInv, 'planks', 32);
-        starterInv = addItem(starterInv, 'torch', 16);
+        starterInv = addItem(starterInv, 'coal', 8);
+        starterInv = addItem(starterInv, 'torch', 8);
         starterInv = addItem(starterInv, 'bread', 8);
         inventoryRef.current = starterInv;
         setInventory(starterInv);
