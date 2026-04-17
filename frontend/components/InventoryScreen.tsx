@@ -15,7 +15,7 @@ import {
 import { RECIPES, Recipe, canCraft } from '@/lib/recipes';
 
 // Tooltip component for inventory items
-function ItemTooltip({ slot, x, y }: { slot: InventorySlot; x: number; y: number }) {
+function ItemTooltip({ slot, x, y, enchantment }: { slot: InventorySlot; x: number; y: number; enchantment?: string }) {
   const def = ITEMS[slot.item];
   if (!def) return null;
 
@@ -70,6 +70,11 @@ function ItemTooltip({ slot, x, y }: { slot: InventorySlot; x: number; y: number
           🍖 Restores: {def.foodRestore} hunger
         </div>
       )}
+      {enchantment && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#aa44ff' }}>
+          ✨ {enchantment}
+        </div>
+      )}
       {def.isBlock && (
         <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#888' }}>
           Right-click to place
@@ -92,6 +97,7 @@ interface Props {
   nearFurnace?: boolean;      // player is within 4 blocks of a furnace
   onClose: () => void;
   armor?: ArmorSlots;
+  enchantments?: Map<number, string>;
 }
 
 // Renders one slot (shared between inventory grid and hotbar row)
@@ -102,6 +108,7 @@ function Slot({
   onClick,
   onHover,
   onLeave,
+  isEnchanted,
 }: {
   slot: InventorySlot | null;
   index: number;
@@ -109,6 +116,7 @@ function Slot({
   onClick: () => void;
   onHover?: (e: React.MouseEvent) => void;
   onLeave?: () => void;
+  isEnchanted?: boolean;
 }) {
   const def = slot ? ITEMS[slot.item] : null;
   return (
@@ -122,7 +130,7 @@ function Slot({
         width: '42px',
         height: '42px',
         background: selected ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.5)',
-        border: selected ? '2px solid #fff' : '2px solid #555',
+        border: selected ? '2px solid #fff' : isEnchanted ? '2px solid #aa44ff' : '2px solid #555',
         boxShadow: selected
           ? 'inset 1px 1px 0 #aaa, inset -1px -1px 0 #333'
           : 'inset 1px 1px 0 #333, inset -1px -1px 0 #111',
@@ -214,15 +222,16 @@ export default function InventoryScreen({
   nearFurnace = false,
   onClose,
   armor,
+  enchantments,
 }: Props) {
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
-  const [hoveredSlot, setHoveredSlot] = useState<{ slot: InventorySlot; x: number; y: number } | null>(null);
+  const [hoveredSlot, setHoveredSlot] = useState<{ slot: InventorySlot; x: number; y: number; index: number } | null>(null);
   const [craftFilter, setCraftFilter] = useState('');
   const [showCraftable, setShowCraftable] = useState(false);
 
-  const handleSlotHover = useCallback((slot: InventorySlot | null, e: React.MouseEvent) => {
+  const handleSlotHover = useCallback((slot: InventorySlot | null, e: React.MouseEvent, slotIndex?: number) => {
     if (slot) {
-      setHoveredSlot({ slot, x: e.clientX, y: e.clientY });
+      setHoveredSlot({ slot, x: e.clientX, y: e.clientY, index: slotIndex ?? -1 });
     } else {
       setHoveredSlot(null);
     }
@@ -353,8 +362,9 @@ export default function InventoryScreen({
                       index={idx}
                       selected={selectedSlot === idx}
                       onClick={() => handleSlotClick(idx)}
-                      onHover={(e) => handleSlotHover(main[row * 9 + col] ?? null, e)}
+                      onHover={(e) => handleSlotHover(main[row * 9 + col] ?? null, e, idx)}
                       onLeave={() => setHoveredSlot(null)}
+                      isEnchanted={enchantments?.has(idx)}
                     />
                   );
                 })}
@@ -374,8 +384,9 @@ export default function InventoryScreen({
                 index={i}
                 selected={selectedSlot === i}
                 onClick={() => handleSlotClick(i)}
-                onHover={(e) => handleSlotHover(slot, e)}
+                onHover={(e) => handleSlotHover(slot, e, i)}
                 onLeave={() => setHoveredSlot(null)}
+                isEnchanted={enchantments?.has(i)}
               />
             ))}
           </div>
@@ -599,7 +610,7 @@ export default function InventoryScreen({
 
       {/* Item tooltip on hover */}
       {hoveredSlot && (
-        <ItemTooltip slot={hoveredSlot.slot} x={hoveredSlot.x} y={hoveredSlot.y} />
+        <ItemTooltip slot={hoveredSlot.slot} x={hoveredSlot.x} y={hoveredSlot.y} enchantment={enchantments?.get(hoveredSlot.index)} />
       )}
     </div>
   );

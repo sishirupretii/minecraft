@@ -4810,6 +4810,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             if (playerRef.current) playerRef.current.inventoryOpen = false;
           }}
           armor={armor}
+          enchantments={enchantedItemsRef.current}
         />
       )}
 
