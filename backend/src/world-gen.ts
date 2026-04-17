@@ -1244,6 +1244,85 @@ export function generateWorld(seed = 1337): Block[] {
     }
   }
 
+  // 4.997 Generate stone bridges over water (1-2 per world)
+  let bridgesPlaced = 0;
+  let bridgeAttempts = 0;
+  while (bridgesPlaced < 2 && bridgeAttempts < 60) {
+    bridgeAttempts++;
+    const bx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const bz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    if (Math.abs(bx - half) < 30 && Math.abs(bz - half) < 30) continue;
+    // Check if there's water here
+    if (heightMap[bx][bz] >= SEA_LEVEL) continue;
+    // Find bridge direction (try to span water)
+    const bridgeDir = rng() < 0.5 ? 'x' : 'z'; // bridge along X or Z axis
+    const bridgeLen = 6 + Math.floor(rng() * 8); // 6-13 blocks
+    let valid = true;
+    // Verify bridge spans water
+    for (let i = 0; i < bridgeLen; i++) {
+      const cx = bridgeDir === 'x' ? bx + i : bx;
+      const cz = bridgeDir === 'z' ? bz + i : bz;
+      if (cx >= WORLD_SIZE || cz >= WORLD_SIZE) { valid = false; break; }
+    }
+    if (!valid) continue;
+    // Build bridge: stone_bricks deck with fence railings
+    for (let i = 0; i < bridgeLen; i++) {
+      const cx = bridgeDir === 'x' ? bx + i : bx;
+      const cz = bridgeDir === 'z' ? bz + i : bz;
+      if (cx >= WORLD_SIZE || cz >= WORLD_SIZE) break;
+      const by = SEA_LEVEL; // bridge at sea level
+      // Deck
+      blocks.push({ x: cx, y: by, z: cz, type: 'stone_bricks' });
+      // Railings on sides
+      if (i === 0 || i === bridgeLen - 1 || i % 3 === 0) {
+        if (bridgeDir === 'x') {
+          if (cz - 1 >= 0) blocks.push({ x: cx, y: by + 1, z: cz - 1, type: 'fence' });
+          if (cz + 1 < WORLD_SIZE) blocks.push({ x: cx, y: by + 1, z: cz + 1, type: 'fence' });
+        } else {
+          if (cx - 1 >= 0) blocks.push({ x: cx - 1, y: by + 1, z: cz, type: 'fence' });
+          if (cx + 1 < WORLD_SIZE) blocks.push({ x: cx + 1, y: by + 1, z: cz, type: 'fence' });
+        }
+      }
+      // Support pillars at start, end, and middle
+      if (i === 0 || i === bridgeLen - 1 || i === Math.floor(bridgeLen / 2)) {
+        for (let py = 0; py < by; py++) {
+          blocks.push({ x: cx, y: py, z: cz, type: 'cobblestone' });
+        }
+      }
+    }
+    // Torches at bridge ends
+    const endX = bridgeDir === 'x' ? bx + bridgeLen - 1 : bx;
+    const endZ = bridgeDir === 'z' ? bz + bridgeLen - 1 : bz;
+    blocks.push({ x: bx, y: SEA_LEVEL + 1, z: bz, type: 'torch' });
+    if (endX < WORLD_SIZE && endZ < WORLD_SIZE) {
+      blocks.push({ x: endX, y: SEA_LEVEL + 1, z: endZ, type: 'torch' });
+    }
+    bridgesPlaced++;
+  }
+
+  // 4.998 Generate campfire circles (rest stops with seating, 2-3 per world)
+  const campCount = 2 + Math.floor(rng() * 2);
+  for (let ci = 0; ci < campCount; ci++) {
+    const cx = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const cz = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    if (Math.abs(cx - half) < 30 && Math.abs(cz - half) < 30) continue;
+    const ch = heightMap[cx][cz];
+    if (ch < SEA_LEVEL) continue;
+    // Campfire in center
+    blocks.push({ x: cx, y: ch + 1, z: cz, type: 'campfire' });
+    // Ring of logs (fence) as seating
+    const seatPositions = [[-2,0],[2,0],[0,-2],[0,2],[-1,-1],[1,1],[-1,1],[1,-1]];
+    for (const [sdx, sdz] of seatPositions) {
+      const sx = cx + sdx, sz = cz + sdz;
+      if (sx >= 0 && sx < WORLD_SIZE && sz >= 0 && sz < WORLD_SIZE && rng() < 0.6) {
+        blocks.push({ x: sx, y: ch + 1, z: sz, type: 'cyan_wood' });
+      }
+    }
+    // Torches around campsite
+    blocks.push({ x: cx + 2, y: ch + 1, z: cz + 2, type: 'torch' });
+    blocks.push({ x: cx - 2, y: ch + 1, z: cz - 2, type: 'torch' });
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 

@@ -2322,6 +2322,29 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           audio.playBlockPlace('enchanting_table');
           setToast('🌀 Teleported!');
           setTimeout(() => setToast(null), 1500);
+          // Ender pearl teleport particles (purple sparkles at destination)
+          for (let ep = 0; ep < 12; ep++) {
+            const mat = new THREE.MeshStandardMaterial({
+              color: new THREE.Color(0x8844cc),
+              emissive: new THREE.Color(0x6622aa),
+              emissiveIntensity: 1.5,
+              transparent: true,
+              opacity: 0.9,
+            });
+            const m = new THREE.Mesh(particleGeom, mat);
+            m.position.set(
+              newX + (Math.random() - 0.5) * 2,
+              Math.max(2, newY) + Math.random() * 2,
+              newZ + (Math.random() - 0.5) * 2
+            );
+            m.castShadow = false; m.receiveShadow = false;
+            scene.add(m);
+            particles.push({
+              mesh: m,
+              velocity: new THREE.Vector3((Math.random() - 0.5) * 3, 1 + Math.random() * 3, (Math.random() - 0.5) * 3),
+              age: 0, life: 0.6 + Math.random() * 0.4,
+            });
+          }
           return;
         }
       }
@@ -2653,6 +2676,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     let lastNightCheck = false;
     // Ambient mob sounds timer
     let lastAmbientSound = 0;
+    // Day/night transition tracking
+    let wasNightLast = false;
     // Mining combo: consecutive blocks within 3s increase XP bonus
     let miningCombo = 0;
     let miningComboTimer = 0;
@@ -2695,6 +2720,16 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       const sx = Math.cos(sunAngle);
       const dayMix = Math.max(0, Math.min(1, (sy + 0.1) * 1.2));
       const isNight = sy < -0.05;
+
+      // ---- Day/night transition messages ----
+      if (isNight && !wasNightLast) {
+        setToast('🌙 Night falls... Beware of monsters!');
+        setTimeout(() => setToast(null), 3000);
+      } else if (!isNight && wasNightLast) {
+        setToast('☀️ The sun rises. Monsters burn in daylight!');
+        setTimeout(() => setToast(null), 3000);
+      }
+      wasNightLast = isNight;
 
       // ---- Hostile mob spawning & update ----
       zombies.isNight = isNight;
@@ -3140,8 +3175,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       // ---- Fishing cooldown ----
       if (fishingCooldownRef.current > 0) fishingCooldownRef.current -= dt;
 
-      // ---- Wheat growth: every ~30s, check nearby farmland for wheat ----
-      if (Math.floor(elapsed / 30) !== Math.floor((elapsed - dt) / 30)) {
+      // ---- Wheat growth: every ~30s (faster in rain), check nearby farmland for wheat ----
+      const wheatGrowInterval = weatherRef.current === 'rain' || weatherRef.current === 'thunder' ? 15 : 30;
+      if (Math.floor(elapsed / wheatGrowInterval) !== Math.floor((elapsed - dt) / wheatGrowInterval)) {
         const px = Math.floor(camera.position.x);
         const pz = Math.floor(camera.position.z);
         for (let dx = -12; dx <= 12; dx++) {
@@ -3149,8 +3185,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             for (let dy = 0; dy <= 20; dy++) {
               const bx = px + dx, bz = pz + dz;
               const bt = world.getType(bx, dy, bz);
-              // Farmland without wheat on top → grow seeds
-              if (bt === 'farmland' && !world.has(bx, dy + 1, bz) && Math.random() < 0.1) {
+              // Farmland without wheat on top → grow seeds (higher chance in rain)
+              const growChance = weatherRef.current !== 'clear' ? 0.2 : 0.1;
+              if (bt === 'farmland' && !world.has(bx, dy + 1, bz) && Math.random() < growChance) {
                 world.addBlock(bx, dy + 1, bz, 'wheat', true);
                 socket.emit('block:place', { x: bx, y: dy + 1, z: bz, type: 'wheat' });
               }
@@ -4946,8 +4983,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'biome') {
+              appendChat({ username: 'system', message: `🌍 Current biome: ${currentBiome} | Weather: ${weatherType}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'recipe' || cmd === 'recipes') {
+              appendChat({ username: 'system', message: `📖 Total recipes available: ${RECIPES.length}. Open crafting table (E key near crafting_table) to see all recipes.`, isSystem: true });
+              return;
+            }
+
             if (cmd === 'help') {
-              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gm, /online, /me, /streak, /dist, /ach, /help', isSystem: true });
+              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gm, /online, /me, /streak, /dist, /ach, /biome, /recipe, /help', isSystem: true });
               return;
             }
 
