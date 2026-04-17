@@ -1455,6 +1455,40 @@ export function generateWorld(seed = 1337): Block[] {
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 
+  // 6. FORCE-CLEAR spawn platform — guaranteed safe open space
+  // Located far from the city (at x=20, z=20)
+  const SPAWN_X = 20;
+  const SPAWN_Z = 20;
+  const SPAWN_PLATFORM_Y = 20; // surface level for spawn platform
+  // Remove ANY blocks in the spawn clear zone (10x15x10)
+  const filtered: Block[] = [];
+  for (const b of blocks) {
+    const inSpawnClear =
+      b.x >= SPAWN_X - 5 && b.x <= SPAWN_X + 5 &&
+      b.z >= SPAWN_Z - 5 && b.z <= SPAWN_Z + 5 &&
+      b.y >= SPAWN_PLATFORM_Y && b.y <= SPAWN_PLATFORM_Y + 15;
+    if (!inSpawnClear) filtered.push(b);
+  }
+  blocks.length = 0;
+  blocks.push(...filtered);
+  // Build a 9x9 stone platform at y=SPAWN_PLATFORM_Y - 1
+  for (let sdx = -4; sdx <= 4; sdx++) {
+    for (let sdz = -4; sdz <= 4; sdz++) {
+      const px = SPAWN_X + sdx;
+      const pz = SPAWN_Z + sdz;
+      if (px < 0 || px >= WORLD_SIZE || pz < 0 || pz >= WORLD_SIZE) continue;
+      // Clear any block at that position and place stone
+      blocks.push({ x: px, y: SPAWN_PLATFORM_Y - 1, z: pz, type: 'royal_brick' });
+    }
+  }
+  // Place a torch marker at the center
+  blocks.push({ x: SPAWN_X, y: SPAWN_PLATFORM_Y, z: SPAWN_Z, type: 'torch' });
+  // Mark with a Base-blue base_block pillar so players can see it from afar
+  blocks.push({ x: SPAWN_X + 2, y: SPAWN_PLATFORM_Y, z: SPAWN_Z + 2, type: 'base_block' });
+  blocks.push({ x: SPAWN_X + 2, y: SPAWN_PLATFORM_Y + 1, z: SPAWN_Z + 2, type: 'base_block' });
+  blocks.push({ x: SPAWN_X - 2, y: SPAWN_PLATFORM_Y, z: SPAWN_Z - 2, type: 'base_block' });
+  blocks.push({ x: SPAWN_X - 2, y: SPAWN_PLATFORM_Y + 1, z: SPAWN_Z - 2, type: 'base_block' });
+
   return blocks;
 }
 
@@ -2216,31 +2250,8 @@ function buildCreatorHub(
   put(x1 - 1, G + 4, z1, 'base_block');
 }
 
-export function computeSpawnPoint(blocks: Block[]): { x: number; y: number; z: number } {
-  // Spawn at an open area north of the city plaza, clear of buildings.
-  // Target: x=64, z=40 (north of city), find top block there.
-  const sx = 64, sz = 40;
-  // Build a height map for this column
-  let topY = 0;
-  for (const b of blocks) {
-    if (b.x === sx && b.z === sz && b.type !== 'water' && b.y > topY) {
-      topY = b.y;
-    }
-  }
-  // Verify there's 3 blocks of clear space above
-  const occupied = new Set<string>();
-  for (const b of blocks) {
-    if (b.x === sx && b.z === sz) occupied.add(`${b.y}`);
-  }
-  // Find first open 3-block column above topY
-  let spawnY = topY + 1;
-  for (let tries = 0; tries < 20; tries++) {
-    if (!occupied.has(`${spawnY}`) && !occupied.has(`${spawnY + 1}`) && !occupied.has(`${spawnY + 2}`)) {
-      break;
-    }
-    spawnY++;
-  }
-  // Safety: never spawn below y=15
-  if (spawnY < 15) spawnY = 15;
-  return { x: sx + 0.5, y: spawnY, z: sz + 0.5 };
+export function computeSpawnPoint(_blocks: Block[]): { x: number; y: number; z: number } {
+  // Spawn on the force-cleared safe platform at (20, 20) — guaranteed open sky,
+  // stone platform below, 15 blocks of clear space above. Far from city.
+  return { x: 20 + 0.5, y: 20, z: 20 + 0.5 };
 }

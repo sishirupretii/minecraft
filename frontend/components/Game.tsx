@@ -1202,6 +1202,19 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       safeSp.y = safeY;
       spawnPointRef.current = { x: safeSp.x, y: safeSp.y, z: safeSp.z };
       player.setPosition(safeSp.x, safeSp.y, safeSp.z);
+      // Aggressively clear spawn area (in case blocks exist above the platform)
+      const sx0 = Math.floor(safeSp.x);
+      const sz0 = Math.floor(safeSp.z);
+      for (let cy = Math.floor(safeSp.y); cy <= Math.floor(safeSp.y) + 3; cy++) {
+        if (world.has(sx0, cy, sz0)) world.removeBlock(sx0, cy, sz0, true);
+      }
+      // Give starter pickaxe if player has no tools (first-time players can break blocks)
+      const hasPickaxe = inventoryRef.current.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
+      if (!hasPickaxe) {
+        const starterInv = addItem(inventoryRef.current, 'wooden_pickaxe', 1);
+        inventoryRef.current = starterInv;
+        setInventory(starterInv);
+      }
       setInvulnerable(true);
       invulnerableRef.current = true;
       setTimeout(() => { setInvulnerable(false); invulnerableRef.current = false; }, 5000);
@@ -4880,33 +4893,35 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     if (playerRef.current) {
       const world = worldRef.current;
-      let sp = spawnPointRef.current || { x: 64.5, y: 80, z: 40.5 };
-      // Find a safe spawn position (clear 3-block column above a solid block)
+      // Always use the safe spawn platform (20, 20) — guaranteed clear
+      let sp = spawnPointRef.current || { x: 20.5, y: 20, z: 20.5 };
+      // Aggressively clear any blocks at the spawn position (in case something grew there)
       if (world) {
         const sx = Math.floor(sp.x);
         const sz = Math.floor(sp.z);
-        // Scan downward from y=80 to find top solid block, then spawn 2 above it
-        let safeY = 80;
-        for (let ty = 80; ty >= 1; ty--) {
-          const bt = world.getType(sx, ty, sz);
-          if (bt && bt !== 'water' && bt !== 'lava') {
-            safeY = ty + 2; // spawn 2 blocks above solid ground
-            break;
+        // Remove any blocks at head/body position
+        for (let clearY = Math.floor(sp.y); clearY <= Math.floor(sp.y) + 2; clearY++) {
+          if (world.has(sx, clearY, sz)) {
+            world.removeBlock(sx, clearY, sz, true);
           }
         }
-        // Verify clear space above
-        let attempts = 0;
-        while (attempts < 10 && (world.has(sx, safeY, sz) || world.has(sx, safeY + 1, sz))) {
-          safeY++;
-          attempts++;
+        // Make sure there's ground below
+        if (!world.has(sx, Math.floor(sp.y) - 1, sz)) {
+          world.addBlock(sx, Math.floor(sp.y) - 1, sz, 'royal_brick');
         }
-        sp = { x: sp.x, y: safeY, z: sp.z };
       }
       playerRef.current.setPosition(sp.x, sp.y, sp.z);
       playerRef.current.velocity.set(0, 0, 0);
       playerRef.current.inventoryOpen = false;
       playerRef.current.breathTimer = 10;
       playerRef.current.chatOpen = false;
+      // Give starter pickaxe if player has no tools (so walls CAN be broken)
+      const hasPickaxe = inventoryRef.current.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
+      if (!hasPickaxe) {
+        const starterInv = addItem(inventoryRef.current, 'wooden_pickaxe', 1);
+        inventoryRef.current = starterInv;
+        setInventory(starterInv);
+      }
     }
     // Tier-based respawn invulnerability
     const protDuration = TIER_RESPAWN_PROTECTION[balanceTier] * 1000;

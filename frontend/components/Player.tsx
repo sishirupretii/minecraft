@@ -28,7 +28,7 @@ const BREAK_TIMES: Record<BlockType, number> = {
   iron_ore: 3.0,        // hard — needs pickaxe
   diamond_ore: 5.0,     // very hard — needs iron+ pickaxe
   furnace: 2.0,         // stone-like
-  base_block: 6.0,      // hardest block in game
+  base_block: 2.5,      // Base-themed block — breakable with pickaxe
   leaves: 0.15,          // fast
   bedrock: 999,          // unbreakable
   gravel: 0.4,
@@ -41,10 +41,10 @@ const BREAK_TIMES: Record<BlockType, number> = {
   bookshelf: 0.7,
   ladder: 0.3,
   chest: 0.9,
-  bronze_block: 6.0,
-  silver_block: 7.0,
-  gold_block: 8.0,
-  crystal_block: 10.0,
+  bronze_block: 2.5,
+  silver_block: 3.0,
+  gold_block: 3.5,
+  crystal_block: 4.0,
   tnt: 0.4,
   bed: 0.5,
   campfire: 0.8,
