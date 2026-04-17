@@ -227,6 +227,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0 });
   const [showCoords, setShowCoords] = useState(true);
   const [onlinePlayers, setOnlinePlayers] = useState<Array<{ id: string; username: string; color: string }>>([]);
+  const [minimapPlayers, setMinimapPlayers] = useState<Array<{ x: number; z: number; color: string; username: string }>>([]);
   const [showPlayerList, setShowPlayerList] = useState(false);
   const [worldLoaded, setWorldLoaded] = useState(false);
   const [loadedBlocks, setLoadedBlocks] = useState(0);
@@ -1302,6 +1303,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     function refreshOnlineList() {
       setOnlinePlayers(others.list());
+      setMinimapPlayers(others.listWithPositions());
     }
 
     socket.on('connect', onConnect);
@@ -1959,7 +1961,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
           inventoryRef.current = nextInv;
           setInventory(nextInv);
-          audio.playBlockPlace('planks'); // eating sound
+          audio.playEat();
           statsRef.current.foodEaten++;
           setToast(`Ate ${def.label} (+${def.foodRestore} hunger)`);
           setTimeout(() => setToast(null), 2000);
@@ -2447,7 +2449,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         const mob = mgr.hitTest(origin, camDir, 4);
         if (mob) {
           const drops = mgr.dealDamage(mob, damage);
-          audio.playBlockBreak('royal_brick');
+          audio.playMobHurt();
           if (drops) {
             let inv = inventoryRef.current;
             for (const drop of drops) {
@@ -4395,6 +4397,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         playerZ={coords.z}
         playerRotY={playerRef.current?.rotY ?? 0}
         visible={showMinimap}
+        otherPlayers={minimapPlayers}
       />
 
       {/* Kill feed */}

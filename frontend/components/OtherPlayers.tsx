@@ -207,6 +207,16 @@ export class OtherPlayersManager {
     }));
   }
 
+  listWithPositions(): Array<{ id: string; username: string; color: string; x: number; z: number }> {
+    return Array.from(this.players.values()).map((p) => ({
+      id: p.id,
+      username: p.username,
+      color: p.color,
+      x: p.x,
+      z: p.z,
+    }));
+  }
+
   clear() {
     for (const id of Array.from(this.players.keys())) this.remove(id);
   }

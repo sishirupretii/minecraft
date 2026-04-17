@@ -527,6 +527,80 @@ export class AudioEngine {
     });
   }
 
+  /** Play eating/munching sound */
+  playEat() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // 3 quick crunchy bites
+    for (let i = 0; i < 3; i++) {
+      const buf = this.makeNoiseBuffer(0.08, true);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(400 + Math.random() * 200, now + i * 0.12);
+      filter.Q.setValueAtTime(2, now);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.08, now + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.08);
+      src.connect(filter).connect(gain).connect(this.masterGain!);
+      src.start(now + i * 0.12);
+      src.stop(now + i * 0.12 + 0.08);
+    }
+  }
+
+  /** Play mob hurt sound */
+  playMobHurt() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.linearRampToValueAtTime(100, now + 0.15);
+    gain.gain.setValueAtTime(0.06, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
+  /** Play anvil clang */
+  playAnvil() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(200, now + 0.2);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+
+  /** Play chest open/close */
+  playChest() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.linearRampToValueAtTime(350, now + 0.1);
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
   /** Play thunder rumble */
   playThunder() {
     if (!this.ctx || this.muted) return;

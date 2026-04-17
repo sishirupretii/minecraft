@@ -4,12 +4,20 @@ import { useEffect, useRef } from 'react';
 import { WorldRenderer } from './World';
 import { BLOCKS, BlockType } from '@/lib/blocks';
 
+interface OtherPlayer {
+  x: number;
+  z: number;
+  color: string;
+  username: string;
+}
+
 interface Props {
   world: WorldRenderer | null;
   playerX: number;
   playerZ: number;
   playerRotY: number;
   visible: boolean;
+  otherPlayers?: OtherPlayer[];
 }
 
 const MAP_SIZE = 120;        // canvas pixel size
@@ -72,7 +80,7 @@ const BLOCK_MAP_COLORS: Partial<Record<BlockType, string>> = {
 
 const WATER_COLOR = '#2d7bd4';
 
-export default function Minimap({ world, playerX, playerZ, playerRotY, visible }: Props) {
+export default function Minimap({ world, playerX, playerZ, playerRotY, visible, otherPlayers }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -111,7 +119,23 @@ export default function Minimap({ world, playerX, playerZ, playerRotY, visible }
         }
       }
 
-      // Player dot
+      // Other player dots
+      if (otherPlayers) {
+        for (const op of otherPlayers) {
+          const opDx = op.x - cx;
+          const opDz = op.z - cz;
+          if (Math.abs(opDx) < MAP_RADIUS && Math.abs(opDz) < MAP_RADIUS) {
+            const opPx = (opDx + MAP_RADIUS) * PIXEL_SCALE;
+            const opPz = (opDz + MAP_RADIUS) * PIXEL_SCALE;
+            ctx.fillStyle = op.color || '#44aaff';
+            ctx.beginPath();
+            ctx.arc(opPx, opPz, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // Player dot (self — on top)
       const centerPx = MAP_SIZE / 2;
       ctx.fillStyle = '#ff3333';
       ctx.beginPath();
@@ -143,7 +167,7 @@ export default function Minimap({ world, playerX, playerZ, playerRotY, visible }
 
     draw();
     return () => cancelAnimationFrame(raf);
-  }, [visible, world, playerX, playerZ, playerRotY]);
+  }, [visible, world, playerX, playerZ, playerRotY, otherPlayers]);
 
   if (!visible) return null;
 
