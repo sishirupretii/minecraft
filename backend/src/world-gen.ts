@@ -1491,7 +1491,19 @@ export function generateWorld(seed = 1337): Block[] {
   blocks.push({ x: SPAWN_X - 2, y: SPAWN_PLATFORM_Y, z: SPAWN_Z - 2, type: 'base_block' });
   blocks.push({ x: SPAWN_X - 2, y: SPAWN_PLATFORM_Y + 1, z: SPAWN_Z - 2, type: 'base_block' });
 
-  return blocks;
+  // ---- FINAL DEDUPE ----
+  // World-gen may produce multiple blocks at the same (x,y,z) (overlapping
+  // structures, spawn platform over terrain, etc). Supabase bulk upsert fails
+  // with "ON CONFLICT DO UPDATE cannot affect row a second time" on dup keys.
+  // Keep the LAST occurrence (so later structures override earlier terrain).
+  const seen = new Map<string, Block>();
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    seen.set(`${b.x},${b.y},${b.z}`, b);
+  }
+  const deduped: Block[] = [];
+  for (const v of seen.values()) deduped.push(v);
+  return deduped;
 }
 
 // ---------------------------------------------------------------------------
