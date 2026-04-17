@@ -805,6 +805,58 @@ export class AudioEngine {
     }
   }
 
+  /** TNT explosion boom */
+  playExplosion() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Low frequency boom
+    const buf = this.makeNoiseBuffer(0.8, true);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(200, now);
+    filter.frequency.exponentialRampToValueAtTime(50, now + 0.5);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    src.connect(filter).connect(gain).connect(this.masterGain!);
+    src.start(now);
+    src.stop(now + 0.8);
+    // High frequency crack on top
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.2);
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.08, now);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.connect(g2).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  }
+
+  /** Creeper hiss before explosion */
+  playCreeperHiss() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const buf = this.makeNoiseBuffer(1.0, true);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(3000, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.01, now);
+    gain.gain.linearRampToValueAtTime(0.1, now + 0.8);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+    src.connect(filter).connect(gain).connect(this.masterGain!);
+    src.start(now);
+    src.stop(now + 1.0);
+  }
+
   dispose() {
     if (this.musicInterval) {
       clearInterval(this.musicInterval);

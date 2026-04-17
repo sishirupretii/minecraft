@@ -1669,7 +1669,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               healthRef.current = Math.round(newHp);
               setHealth(Math.round(newHp));
             }
-            audio.playBlockBreak('cobblestone');
+            audio.playExplosion();
             // Camera shake from explosion
             cameraShakeTimer = 0.5;
             cameraShakeIntensity = Math.max(0, 0.3 * (1 - pdist / 8));
@@ -3944,6 +3944,17 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           for (let dz = -6; dz <= 6; dz++) {
             for (let dy = -3; dy <= 6; dy++) {
               const tx = px + dx, ty = py + dy, tz = pz + dz;
+              // Campfire smoke particles
+              if (world.getType(tx, ty, tz) === 'campfire' && torchParticles.length < 50 && Math.random() < 0.4) {
+                const smokeMat = new THREE.MeshStandardMaterial({
+                  color: 0x888888, transparent: true, opacity: 0.3,
+                });
+                const smokeMesh = new THREE.Mesh(torchParticleGeom, smokeMat);
+                smokeMesh.position.set(tx + 0.5 + (Math.random() - 0.5) * 0.3, ty + 1.0, tz + 0.5 + (Math.random() - 0.5) * 0.3);
+                smokeMesh.castShadow = false;
+                scene.add(smokeMesh);
+                torchParticles.push({ mesh: smokeMesh, age: 0, life: 2.0 + Math.random(), baseY: ty + 1.0 });
+              }
               if (world.getType(tx, ty, tz) === 'torch' && torchParticles.length < 40) {
                 const tMat = new THREE.MeshStandardMaterial({
                   color: 0xffcc44, emissive: 0xff8800, emissiveIntensity: 0.6,
@@ -5042,6 +5053,21 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
             if (cmd === 'biome') {
               appendChat({ username: 'system', message: `🌍 Current biome: ${currentBiome} | Weather: ${weatherType}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'nft' || cmd === 'onchain') {
+              if (!walletAddress) {
+                appendChat({ username: 'system', message: '⛓️ Connect wallet to view on-chain status', isSystem: true });
+                return;
+              }
+              const ethAmt = ethBalance !== undefined ? (Number(ethBalance) / 1e18).toFixed(4) : '—';
+              const s = statsRef.current;
+              appendChat({ username: 'system', message: `⛓️ On-Chain Status:`, isSystem: true });
+              appendChat({ username: 'system', message: `  Network: Base (8453) | Balance: ${ethAmt} ETH`, isSystem: true });
+              appendChat({ username: 'system', message: `  Tier: ${tierInfo.label} | XP Multi: ${TIER_XP_MULTIPLIER[balanceTier]}x`, isSystem: true });
+              appendChat({ username: 'system', message: `  Emeralds Earned: ${s.emeraldsEarned} | Achievements: ${earnedRef.current.size}/${ACHIEVEMENT_DEFS.length}`, isSystem: true });
+              appendChat({ username: 'system', message: `  Land Claims: ${landClaimsRef.current.size} | Lucky Drops: ${s.luckyDrops}`, isSystem: true });
               return;
             }
 
