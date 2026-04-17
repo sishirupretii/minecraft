@@ -85,7 +85,13 @@ export class WorldRenderer {
       mesh.count = 0;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.frustumCulled = true;
+      // IMPORTANT: frustumCulled must be false for InstancedMesh. Three.js
+      // uses the base geometry's bounding sphere (a tiny 1×1×1 box at the
+      // origin) for the cull test — it does NOT compute bounds from the
+      // instance matrices. With culling on, the entire mesh disappears the
+      // moment the camera moves away from world-center. Grass (the thinnest
+      // surface layer) vanishes first; deeper block types survive longer.
+      mesh.frustumCulled = false;
       mesh.name = `blocks-${type}`;
       (mesh as any).userData = { blockType: type, baseColor: meta.color };
 
@@ -248,7 +254,7 @@ export class WorldRenderer {
     nmesh.count = per.count;
     nmesh.castShadow = true;
     nmesh.receiveShadow = true;
-    nmesh.frustumCulled = true;
+    nmesh.frustumCulled = false;
     nmesh.name = `blocks-${type}`;
     (nmesh as any).userData = { blockType: type, baseColor: meta.color };
 
