@@ -469,74 +469,97 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const sky = new THREE.Mesh(skyGeom, skyMat);
     scene.add(sky);
 
-    // ---- BASECRAFT sky logo (Base branding) ----
-    // Generate a canvas texture with the "BASECRAFT" text in Base blue
+    // ---- BASED CRAFT sky logo (Base branding) ----
+    // Wide canvas to prevent text clipping
     const logoCanvas = document.createElement('canvas');
-    logoCanvas.width = 1024;
-    logoCanvas.height = 256;
+    logoCanvas.width = 2048;
+    logoCanvas.height = 512;
     const lctx = logoCanvas.getContext('2d')!;
-    // Transparent background
-    lctx.clearRect(0, 0, 1024, 256);
-    // Base blue gradient text
-    const logoGrad = lctx.createLinearGradient(0, 0, 0, 256);
-    logoGrad.addColorStop(0, '#3478f6');
+    lctx.clearRect(0, 0, 2048, 512);
+    // Measure text first so we can auto-fit
+    const logoText = 'BASED CRAFT';
+    // Start with a smaller font for Press Start 2P (very wide monospace)
+    let fontSize = 160;
+    lctx.font = `bold ${fontSize}px "Press Start 2P", monospace`;
+    let m = lctx.measureText(logoText);
+    // Scale down if wider than 90% of canvas
+    while (m.width > 2048 * 0.9 && fontSize > 40) {
+      fontSize -= 5;
+      lctx.font = `bold ${fontSize}px "Press Start 2P", monospace`;
+      m = lctx.measureText(logoText);
+    }
+    // Base blue gradient fill
+    const logoGrad = lctx.createLinearGradient(0, 128, 0, 384);
+    logoGrad.addColorStop(0, '#5c9cff');
     logoGrad.addColorStop(0.5, '#0052ff');
     logoGrad.addColorStop(1, '#0033aa');
     lctx.fillStyle = logoGrad;
-    lctx.font = 'bold 150px "Press Start 2P", monospace';
     lctx.textAlign = 'center';
     lctx.textBaseline = 'middle';
-    // Drop shadow
-    lctx.shadowColor = 'rgba(0,0,0,0.8)';
-    lctx.shadowBlur = 12;
-    lctx.shadowOffsetX = 4;
-    lctx.shadowOffsetY = 4;
-    lctx.fillText('BASECRAFT', 512, 128);
-    // Reset shadow, add outline
+    // Drop shadow for depth
+    lctx.shadowColor = 'rgba(0,0,0,0.85)';
+    lctx.shadowBlur = 14;
+    lctx.shadowOffsetX = 5;
+    lctx.shadowOffsetY = 5;
+    lctx.fillText(logoText, 1024, 256);
+    // White outline
     lctx.shadowColor = 'transparent';
     lctx.strokeStyle = '#ffffff';
-    lctx.lineWidth = 3;
-    lctx.strokeText('BASECRAFT', 512, 128);
+    lctx.lineWidth = 4;
+    lctx.strokeText(logoText, 1024, 256);
     const logoTex = new THREE.CanvasTexture(logoCanvas);
     logoTex.needsUpdate = true;
     const logoMat = new THREE.SpriteMaterial({
       map: logoTex,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
       depthTest: false,
       depthWrite: false,
     });
     const logoSprite = new THREE.Sprite(logoMat);
-    logoSprite.scale.set(180, 45, 1);
-    logoSprite.position.set(0, 140, -180); // high in the sky, slightly north
+    // 4:1 aspect ratio matching canvas
+    logoSprite.scale.set(240, 60, 1);
+    logoSprite.position.set(0, 140, -180);
     logoSprite.renderOrder = 5;
     scene.add(logoSprite);
 
-    // "Built on Base" subtitle
+    // "BUILT ON BASE" subtitle
     const subCanvas = document.createElement('canvas');
-    subCanvas.width = 1024;
-    subCanvas.height = 128;
+    subCanvas.width = 2048;
+    subCanvas.height = 256;
     const sctx = subCanvas.getContext('2d')!;
-    sctx.clearRect(0, 0, 1024, 128);
+    sctx.clearRect(0, 0, 2048, 256);
+    const subText = '◆ BUILT ON BASE ◆';
+    let subFontSize = 70;
+    sctx.font = `bold ${subFontSize}px "Press Start 2P", monospace`;
+    let sm = sctx.measureText(subText);
+    while (sm.width > 2048 * 0.9 && subFontSize > 24) {
+      subFontSize -= 3;
+      sctx.font = `bold ${subFontSize}px "Press Start 2P", monospace`;
+      sm = sctx.measureText(subText);
+    }
     sctx.fillStyle = '#0052ff';
-    sctx.font = 'bold 60px "Press Start 2P", monospace';
     sctx.textAlign = 'center';
     sctx.textBaseline = 'middle';
-    sctx.shadowColor = 'rgba(0,0,0,0.7)';
-    sctx.shadowBlur = 8;
-    sctx.shadowOffsetY = 3;
-    sctx.fillText('⬢ BUILT ON BASE ⬢', 512, 64);
+    sctx.shadowColor = 'rgba(0,0,0,0.8)';
+    sctx.shadowBlur = 10;
+    sctx.shadowOffsetY = 4;
+    sctx.fillText(subText, 1024, 128);
+    sctx.shadowColor = 'transparent';
+    sctx.strokeStyle = '#ffffff';
+    sctx.lineWidth = 2;
+    sctx.strokeText(subText, 1024, 128);
     const subTex = new THREE.CanvasTexture(subCanvas);
     const subMat = new THREE.SpriteMaterial({
       map: subTex,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.8,
       depthTest: false,
       depthWrite: false,
     });
     const subSprite = new THREE.Sprite(subMat);
-    subSprite.scale.set(120, 15, 1);
-    subSprite.position.set(0, 115, -180);
+    subSprite.scale.set(160, 20, 1);
+    subSprite.position.set(0, 100, -180);
     subSprite.renderOrder = 5;
     scene.add(subSprite);
 
@@ -1220,12 +1243,25 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
       player.setPosition(safeSp.x, safeSp.y, safeSp.z);
       player.velocity.set(0, 0, 0);
-      // Give starter pickaxe if player has no tools (first-time players can break blocks)
-      const hasPickaxe = inventoryRef.current.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
+      // Starter kit: pickaxe (to dig), axe, sword, and placeable blocks (to build)
+      let starterInv = inventoryRef.current;
+      const hasPickaxe = starterInv.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
       if (!hasPickaxe) {
-        const starterInv = addItem(inventoryRef.current, 'wooden_pickaxe', 1);
+        starterInv = addItem(starterInv, 'wooden_pickaxe', 1);
+        starterInv = addItem(starterInv, 'wooden_axe', 1);
+        starterInv = addItem(starterInv, 'wooden_sword', 1);
+        // Give 32 cobblestone and 32 planks so they can build immediately
+        starterInv = addItem(starterInv, 'cobblestone', 32);
+        starterInv = addItem(starterInv, 'planks', 32);
+        starterInv = addItem(starterInv, 'torch', 16);
+        starterInv = addItem(starterInv, 'bread', 8);
         inventoryRef.current = starterInv;
         setInventory(starterInv);
+        // One-time tutorial hint
+        setTimeout(() => {
+          setToast('⛏️ LEFT-CLICK and HOLD to mine  •  RIGHT-CLICK to place blocks');
+          setTimeout(() => setToast(null), 6000);
+        }, 2000);
       }
       setInvulnerable(true);
       invulnerableRef.current = true;
@@ -4958,10 +4994,17 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       playerRef.current.inventoryOpen = false;
       playerRef.current.breathTimer = 10;
       playerRef.current.chatOpen = false;
-      // Give starter pickaxe if player has no tools (so walls CAN be broken)
-      const hasPickaxe = inventoryRef.current.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
+      // Re-give starter kit after death so player can keep playing
+      let starterInv = inventoryRef.current;
+      const hasPickaxe = starterInv.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
       if (!hasPickaxe) {
-        const starterInv = addItem(inventoryRef.current, 'wooden_pickaxe', 1);
+        starterInv = addItem(starterInv, 'wooden_pickaxe', 1);
+        starterInv = addItem(starterInv, 'wooden_axe', 1);
+        starterInv = addItem(starterInv, 'wooden_sword', 1);
+        starterInv = addItem(starterInv, 'cobblestone', 32);
+        starterInv = addItem(starterInv, 'planks', 32);
+        starterInv = addItem(starterInv, 'torch', 16);
+        starterInv = addItem(starterInv, 'bread', 8);
         inventoryRef.current = starterInv;
         setInventory(starterInv);
       }
