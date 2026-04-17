@@ -64,7 +64,7 @@ import {
 import { WorldRenderer } from './World';
 import { PlayerController } from './Player';
 import { OtherPlayersManager } from './OtherPlayers';
-import { CowManager, PigManager, ChickenManager, ZombieManager, SkeletonManager, CreeperManager, SpiderManager, WolfManager, EndermanManager, IronGolemManager, SlimeManager, BatManager, VillagerManager, WitchManager, BlazeManager, PhantomManager, FoxManager, GhastManager, ParrotManager, TurtleManager } from './Mobs';
+import { CowManager, PigManager, ChickenManager, ZombieManager, SkeletonManager, CreeperManager, SpiderManager, WolfManager, EndermanManager, IronGolemManager, SlimeManager, BatManager, VillagerManager, WitchManager, BlazeManager, PhantomManager, FoxManager, GhastManager, ParrotManager, TurtleManager, WardenManager } from './Mobs';
 import { FlowerManager } from './Flowers';
 import Hotbar from './Hotbar';
 import Chat, { ChatMsg } from './Chat';
@@ -731,6 +731,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const ghasts = new GhastManager(scene, world);
     const parrots = new ParrotManager(scene, world);
     const turtles = new TurtleManager(scene, world);
+    const wardens = new WardenManager(scene, world);
     const flowers = new FlowerManager(scene);
     let worldSizeLocal = 128;
     let worldHeightLocal = 32;
@@ -1052,6 +1053,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       foxes.spawn(3, 64, 64, 35);
       parrots.spawnFlying(4, 64, 64, 40);
       turtles.spawn(3, 64, 64, 30);
+      // Warden boss — spawns deep underground (rare, 1 per world)
+      wardens.spawn(1, 32 + Math.floor(Math.random() * 64), 32 + Math.floor(Math.random() * 64), 10);
 
       // ---- Generate structures: small dungeons ----
       const dungeonCount = 3 + Math.floor(Math.random() * 3);
@@ -2437,6 +2440,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         [witches, 'Witch'], [blazes, 'Blaze'], [phantoms, 'Phantom'],
         [foxes, 'Fox'], [ghasts, 'Ghast'],
         [parrots, 'Parrot'], [turtles, 'Turtle'],
+        [wardens, 'Warden'],
       ];
       let hit = false;
       for (const [mgr, mobName] of managersWithNames) {
@@ -2658,6 +2662,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       ghasts.update(dt, camera.position);
       parrots.update(dt, camera.position);
       turtles.update(dt, camera.position);
+      wardens.update(dt, camera.position);
 
       // Enderman spawn at night (rare)
       witches.isNight = isNight;
@@ -2783,6 +2788,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       applyMobDamage(phantoms.checkDiveAttack(camera.position), 'Swooped by Phantom');
       // Ghast fireball attack
       applyMobDamage(ghasts.checkRangedAttack(camera.position), 'Fireballed by Ghast');
+      // Warden melee (boss mob — high damage)
+      applyMobDamage(wardens.checkAttack(camera.position), 'Crushed by Warden');
 
       // Iron golem auto-attacks nearby hostile mobs (all hostile types)
       const golemTargetMgrs = [zombies, skeletons, spiders, creepers, slimes, witches] as const;

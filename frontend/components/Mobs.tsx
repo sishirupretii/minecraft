@@ -3196,3 +3196,212 @@ export class TurtleManager extends BaseMobManager {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// WARDEN — Deep dark boss mob. Huge, slow, very dangerous.
+// Spawns only deep underground (Y < 8). 100 HP, high damage.
+// ---------------------------------------------------------------------------
+export class WardenManager extends BaseMobManager {
+  private attackCooldowns = new Map<MobState, number>();
+
+  protected speed() { return 1.8; }
+  protected maxHealth() { return 100; }
+  protected cliffDrop() { return 5; }
+  protected prefersGrass() { return false; }
+  protected bobRate() { return 3; }
+  protected bobAmp() { return 0.06; }
+
+  protected drops(): MobDrop[] {
+    return [
+      { item: 'diamond', count: 3 + Math.floor(Math.random() * 5) },
+      { item: 'emerald', count: 5 + Math.floor(Math.random() * 10) },
+      { item: 'nether_star', count: 1 },
+    ];
+  }
+
+  protected buildMob(): THREE.Group {
+    const g = new THREE.Group();
+
+    // Large body (2x scale of normal mobs)
+    const bodyGeo = new THREE.BoxGeometry(1.2, 2.0, 0.8);
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x0a2a3a, roughness: 0.9, metalness: 0.1,
+    });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 1.5;
+    body.castShadow = true;
+    g.add(body);
+
+    // Head
+    const headGeo = new THREE.BoxGeometry(0.9, 0.7, 0.7);
+    const headMat = new THREE.MeshStandardMaterial({
+      color: 0x0c3040, roughness: 0.85,
+    });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = 2.9;
+    head.castShadow = true;
+    g.add(head);
+
+    // Glowing "eyes" (actually tendrils on the head)
+    const eyeGeo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+    const eyeMat = new THREE.MeshStandardMaterial({
+      color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 2,
+    });
+    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(-0.25, 3.0, 0.35);
+    g.add(eyeL);
+    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.25, 3.0, 0.35);
+    g.add(eyeR);
+
+    // Arms
+    const armGeo = new THREE.BoxGeometry(0.4, 1.4, 0.4);
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x0a2a3a, roughness: 0.9 });
+    const armL = new THREE.Mesh(armGeo, armMat);
+    armL.position.set(-0.9, 1.6, 0);
+    armL.castShadow = true;
+    g.add(armL);
+    const armR = new THREE.Mesh(armGeo, armMat);
+    armR.position.set(0.9, 1.6, 0);
+    armR.castShadow = true;
+    g.add(armR);
+
+    // Legs
+    const legGeo = new THREE.BoxGeometry(0.45, 1.0, 0.45);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x082028, roughness: 0.95 });
+    const legL = new THREE.Mesh(legGeo, legMat);
+    legL.position.set(-0.35, 0.5, 0);
+    legL.castShadow = true;
+    g.add(legL);
+    const legR = new THREE.Mesh(legGeo, legMat);
+    legR.position.set(0.35, 0.5, 0);
+    legR.castShadow = true;
+    g.add(legR);
+
+    // Health bar (wider than normal)
+    const barBgGeo = new THREE.PlaneGeometry(1.5, 0.12);
+    const barBgMat = new THREE.MeshBasicMaterial({ color: 0x333333, side: THREE.DoubleSide });
+    const barBg = new THREE.Mesh(barBgGeo, barBgMat);
+    barBg.position.y = 3.8;
+    g.add(barBg);
+    const barGeo = new THREE.PlaneGeometry(1.5, 0.12);
+    const barMat = new THREE.MeshBasicMaterial({ color: 0xff2222, side: THREE.DoubleSide });
+    const bar = new THREE.Mesh(barGeo, barMat);
+    bar.position.y = 3.8;
+    bar.position.z = 0.001;
+    g.add(bar);
+
+    // Boss name label would go here in a full implementation
+    g.scale.set(1, 1, 1);
+    return g;
+  }
+
+  update(dt: number, playerPos?: THREE.Vector3) {
+    if (!playerPos) return;
+    for (let mi = this.mobs.length - 1; mi >= 0; mi--) {
+      const mob = this.mobs[mi];
+      if (mob.dead) {
+        mob.hurtTimer -= dt;
+        mob.group.scale.multiplyScalar(0.92);
+        if (mob.hurtTimer <= -0.5) {
+          this.scene.remove(mob.group);
+          mob.group.traverse((obj) => {
+            if ((obj as THREE.Mesh).isMesh) {
+              const m = obj as THREE.Mesh;
+              m.geometry.dispose();
+              const mat = m.material;
+              if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+              else (mat as THREE.Material).dispose();
+            }
+          });
+          this.mobs.splice(mi, 1);
+        }
+        continue;
+      }
+
+      // Warden always chases player when nearby
+      const dx = playerPos.x - mob.group.position.x;
+      const dz = playerPos.z - mob.group.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+
+      if (dist < 20) {
+        // Chase player
+        mob.dir = Math.atan2(dx, dz);
+        const spd = this.speed() * dt;
+        const nx = mob.group.position.x + Math.sin(mob.dir) * spd;
+        const nz = mob.group.position.z + Math.cos(mob.dir) * spd;
+        const gx = Math.floor(nx);
+        const gz = Math.floor(nz);
+        const surface = this.findSurface(gx, gz);
+        if (surface !== null) {
+          mob.group.position.x = nx;
+          mob.group.position.z = nz;
+          mob.group.position.y = surface + 1;
+        }
+        mob.group.rotation.y = mob.dir;
+      } else {
+        // Idle wandering
+        mob.nextTurn -= dt;
+        if (mob.nextTurn <= 0) {
+          mob.dir = Math.random() * Math.PI * 2;
+          mob.nextTurn = 3 + Math.random() * 4;
+        }
+        const spd = this.speed() * 0.3 * dt;
+        mob.group.position.x += Math.sin(mob.dir) * spd;
+        mob.group.position.z += Math.cos(mob.dir) * spd;
+        mob.group.rotation.y = mob.dir;
+      }
+
+      // Walking bob
+      mob.bobPhase += dt * this.bobRate();
+      const arms = mob.group.children;
+      if (arms[4]) arms[4].rotation.x = Math.sin(mob.bobPhase) * 0.3; // left arm
+      if (arms[5]) arms[5].rotation.x = -Math.sin(mob.bobPhase) * 0.3; // right arm
+      if (arms[6]) arms[6].rotation.x = -Math.sin(mob.bobPhase) * 0.25; // left leg
+      if (arms[7]) arms[7].rotation.x = Math.sin(mob.bobPhase) * 0.25; // right leg
+
+      // Hurt flash
+      if (mob.hurtTimer > 0) {
+        mob.hurtTimer -= dt;
+        mob.group.children.forEach(c => {
+          if ((c as THREE.Mesh).isMesh && (c as THREE.Mesh).material) {
+            const mat = (c as THREE.Mesh).material as THREE.MeshStandardMaterial;
+            if (mat.emissive) mat.emissive.setHex(mob.hurtTimer > 0 ? 0xff0000 : 0x000000);
+          }
+        });
+      }
+
+      // Health bar update
+      const healthBar = mob.group.children[mob.group.children.length - 1] as THREE.Mesh;
+      if (healthBar && healthBar.geometry) {
+        healthBar.scale.x = Math.max(0, mob.health / mob.maxHealth);
+      }
+
+      // Despawn if too far
+      if (dist > 100) mob.dead = true;
+
+      // Attack cooldown tick
+      const cd = this.attackCooldowns.get(mob) ?? 0;
+      if (cd > 0) this.attackCooldowns.set(mob, cd - dt);
+    }
+  }
+
+  checkAttack(playerPos: THREE.Vector3): number {
+    let totalDamage = 0;
+    for (const mob of this.mobs) {
+      if (mob.dead) continue;
+      const dx = mob.group.position.x - playerPos.x;
+      const dz = mob.group.position.z - playerPos.z;
+      const dy = mob.group.position.y - playerPos.y;
+      const dist2 = dx * dx + dz * dz + dy * dy;
+      if (dist2 < 4) { // ~2 block attack range
+        const cd = this.attackCooldowns.get(mob) ?? 0;
+        if (cd <= 0) {
+          totalDamage += 8; // 4 hearts per hit — very dangerous!
+          this.attackCooldowns.set(mob, 1.5);
+        }
+      }
+    }
+    return totalDamage;
+  }
+}
