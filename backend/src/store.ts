@@ -269,27 +269,57 @@ export async function recordPurchase(params: {
 }
 
 // ---------- Live USD→token conversion via DexScreener ----------
-// Cache for 20s to avoid hammering their API
-let _priceCache: { priceUsd: number; fetchedAt: number } | null = null;
+// Short cache (3s) so back-to-back calls don't hammer the API but price is fresh.
+let _priceCache: {
+  priceUsd: number;
+  fetchedAt: number;
+  change24h: number;
+  liquidityUsd: number;
+  volume24hUsd: number;
+  pairUrl: string;
+} | null = null;
 
 export async function getTokenPriceUsd(): Promise<number | null> {
-  if (_priceCache && Date.now() - _priceCache.fetchedAt < 20_000) {
-    return _priceCache.priceUsd;
+  const full = await getTokenMarketData();
+  return full?.priceUsd ?? null;
+}
+
+/** Full market data — not just price. Returns null on total failure, cached on transient errors. */
+export async function getTokenMarketData(): Promise<{
+  priceUsd: number;
+  fetchedAt: number;
+  change24h: number;
+  liquidityUsd: number;
+  volume24hUsd: number;
+  pairUrl: string;
+} | null> {
+  if (_priceCache && Date.now() - _priceCache.fetchedAt < 3_000) {
+    return _priceCache;
   }
   try {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${TOKEN_ADDRESS}`);
-    if (!res.ok) return _priceCache?.priceUsd ?? null;
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${TOKEN_ADDRESS}`, {
+      // Avoid any intermediate CDN caching — we want the freshest snapshot
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    if (!res.ok) return _priceCache;
     const data: any = await res.json();
     const pairs: any[] = data?.pairs ?? [];
     const base8453 = pairs.filter((p) => p?.chainId === 'base' || p?.chainId === '8453' || p?.chainId === 8453);
     const best = (base8453.length ? base8453 : pairs)
       .sort((a: any, b: any) => Number(b?.liquidity?.usd ?? 0) - Number(a?.liquidity?.usd ?? 0))[0];
     const price = Number(best?.priceUsd ?? 0);
-    if (!price || !isFinite(price) || price <= 0) return _priceCache?.priceUsd ?? null;
-    _priceCache = { priceUsd: price, fetchedAt: Date.now() };
-    return price;
+    if (!price || !isFinite(price) || price <= 0) return _priceCache;
+    _priceCache = {
+      priceUsd: price,
+      fetchedAt: Date.now(),
+      change24h: Number(best?.priceChange?.h24 ?? 0),
+      liquidityUsd: Number(best?.liquidity?.usd ?? 0),
+      volume24hUsd: Number(best?.volume?.h24 ?? 0),
+      pairUrl: best?.url ?? `https://dexscreener.com/base/${TOKEN_ADDRESS}`,
+    };
+    return _priceCache;
   } catch {
-    return _priceCache?.priceUsd ?? null;
+    return _priceCache;
   }
 }
 

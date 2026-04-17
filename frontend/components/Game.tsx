@@ -220,15 +220,35 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [burnTotals, setBurnTotals] = useState<{ totalBurned: string; burnCount: number }>({ totalBurned: '0', burnCount: 0 });
   const [burnHistory, setBurnHistory] = useState<Array<{ tx_hash: string; perk_id: string; amount: string; created_at: string }>>([]);
   // Live token price (from DexScreener)
-  const [tokenPrice, setTokenPrice] = useState<{ priceUsd: number; change24h: number; symbol: string; liquidityUsd?: number; volume24hUsd?: number } | null>(null);
-  // Keep the store's token price fresh (refresh every 20s while open)
+  const [tokenPrice, setTokenPrice] = useState<{
+    priceUsd: number;
+    change24h: number;
+    symbol: string;
+    liquidityUsd?: number;
+    volume24hUsd?: number;
+    pairUrl?: string;
+    fetchedAt?: number;
+  } | null>(null);
+
+  // Keep the store's token price fresh (refresh every 8s while open)
   useEffect(() => {
     if (!storeOpen) return;
     const s = getSocket();
     s.emit('store:price');
-    const iv = setInterval(() => s.emit('store:price'), 20_000);
+    const iv = setInterval(() => s.emit('store:price'), 8_000);
     return () => clearInterval(iv);
   }, [storeOpen]);
+
+  // Seconds since last price update — powers the LIVE indicator
+  const [priceAge, setPriceAge] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (tokenPrice?.fetchedAt) {
+        setPriceAge(Math.floor((Date.now() - tokenPrice.fetchedAt) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [tokenPrice?.fetchedAt]);
 
   // Holder tier XP multiplier: +10% rookie, +25% pro, +50% whale, +100% titan
   const holderXpMult = holderInfo
@@ -241,17 +261,20 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const holderXpMultRef = useRef(holderXpMult);
   useEffect(() => { holderXpMultRef.current = holderXpMult; }, [holderXpMult]);
 
-  // Poll DexScreener for our token's price on Base every 30s
+  // Poll DexScreener DIRECTLY every 8s — cache-bust with a timestamp query param
+  // to bypass any intermediate CDN caching (makes price feel truly live)
   useEffect(() => {
     const TOKEN_ADDR = '0x53b83E4C2402DcF4Fe17755d51dd92d25c1a67c8';
     let cancel = false;
     const fetchPrice = async () => {
       try {
-        const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${TOKEN_ADDR}`);
+        const res = await fetch(
+          `https://api.dexscreener.com/latest/dex/tokens/${TOKEN_ADDR}?_=${Date.now()}`,
+          { cache: 'no-store' },
+        );
         if (!res.ok) return;
         const data = await res.json();
         const pairs: any[] = data?.pairs ?? [];
-        // Use the pair with highest liquidity on Base
         const basePairs = pairs.filter(p => p?.chainId === 'base' || p?.chainId === 8453 || p?.chainId === '8453');
         const best = (basePairs.length ? basePairs : pairs)
           .sort((a: any, b: any) => (Number(b?.liquidity?.usd ?? 0) - Number(a?.liquidity?.usd ?? 0)))[0];
@@ -259,16 +282,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setTokenPrice({
           priceUsd: Number(best.priceUsd ?? 0),
           change24h: Number(best.priceChange?.h24 ?? 0),
-          symbol: best.baseToken?.symbol ?? 'BASED',
+          symbol: best.baseToken?.symbol ?? 'BASEDCRAFT',
           liquidityUsd: Number(best.liquidity?.usd ?? 0),
           volume24hUsd: Number(best.volume?.h24 ?? 0),
+          pairUrl: best.url ?? `https://dexscreener.com/base/${TOKEN_ADDR}`,
+          fetchedAt: Date.now(),
         });
       } catch {
         /* silent — no price yet or network error */
       }
     };
     fetchPrice();
-    const iv = setInterval(fetchPrice, 30_000);
+    const iv = setInterval(fetchPrice, 8_000);
     return () => { cancel = true; clearInterval(iv); };
   }, []);
   const [gameVolume, setGameVolume] = useState(1.0);
@@ -5544,31 +5569,32 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
       {/* Live token price ticker — bottom-right, clickable to open store */}
       {tokenPrice && (
-        <button
-          onClick={() => {
-            const s = getSocket();
-            s.emit('store:config'); s.emit('store:purchases'); s.emit('store:burns'); s.emit('store:holder_info');
-            setStoreOpen(true);
-          }}
+        <div
           className="pointer-events-auto absolute z-20"
           style={{
             bottom: '110px', right: '10px',
             padding: '6px 10px',
-            background: 'rgba(0,0,0,0.65)',
+            background: 'rgba(0,0,0,0.72)',
             border: `1px solid ${tokenPrice.change24h >= 0 ? '#4ade80' : '#ef4444'}`,
             borderRadius: '4px',
             fontFamily: "'VT323', monospace",
             fontSize: '14px',
             color: '#fff',
-            cursor: 'pointer',
-            minWidth: '160px',
+            minWidth: '180px',
             textShadow: '1px 1px 0 #000',
             boxShadow: `0 0 8px ${tokenPrice.change24h >= 0 ? 'rgba(74,222,128,0.25)' : 'rgba(239,68,68,0.25)'}`,
           }}
-          title="Click to open Store"
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-            <span style={{ color: '#5c9cff', fontFamily: "'Press Start 2P', monospace", fontSize: '8px' }}>
+            <span style={{ color: '#5c9cff', fontFamily: "'Press Start 2P', monospace", fontSize: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <span
+                style={{
+                  display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
+                  background: priceAge < 10 ? '#22c55e' : priceAge < 30 ? '#eab308' : '#ef4444',
+                  boxShadow: `0 0 6px ${priceAge < 10 ? '#22c55e' : priceAge < 30 ? '#eab308' : '#ef4444'}`,
+                  animation: priceAge < 10 ? 'bcPulse 1s infinite' : 'none',
+                }}
+              />
               ${tokenPrice.symbol}
             </span>
             <span style={{ color: tokenPrice.change24h >= 0 ? '#4ade80' : '#ef4444', fontSize: '12px' }}>
@@ -5583,10 +5609,43 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               24h Vol: ${Math.round(tokenPrice.volume24hUsd).toLocaleString()}
             </div>
           )}
-          <div style={{ fontSize: '10px', color: '#88aaff', marginTop: '2px' }}>
-            Press U · 🛒 Store
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.55)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+            <span style={{ color: priceAge < 10 ? '#4ade80' : '#eab308' }}>
+              ● LIVE · {priceAge}s ago
+            </span>
+            {tokenPrice.pairUrl && (
+              <a
+                href={tokenPrice.pairUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                style={{ color: '#88aaff', fontSize: '10px', textDecoration: 'underline' }}
+              >
+                verify ↗
+              </a>
+            )}
           </div>
-        </button>
+          <button
+            onClick={() => {
+              const s = getSocket();
+              s.emit('store:config'); s.emit('store:purchases'); s.emit('store:burns'); s.emit('store:holder_info');
+              setStoreOpen(true);
+            }}
+            style={{
+              fontSize: '10px', color: '#88aaff', marginTop: '2px',
+              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+              fontFamily: "'VT323', monospace", textShadow: '1px 1px 0 #000',
+            }}
+          >
+            Press U · 🛒 Open Store
+          </button>
+          <style>{`
+            @keyframes bcPulse {
+              0%, 100% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.4; transform: scale(1.3); }
+            }
+          `}</style>
+        </div>
       )}
 
       {/* Creeper proximity warning — pulsing green vignette */}
