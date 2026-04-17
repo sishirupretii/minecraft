@@ -8,7 +8,8 @@ type Key = string; // "x,y,z"
 // invalid (e.g. new biome scheme, different block types). On startup, if
 // the persisted world_meta.version doesn't match, we wipe the blocks table
 // and regenerate from scratch. v2 = biomes (plains / desert / snow).
-const WORLD_VERSION = 2;
+// v3 = safe spawn platform at (20,20,20), city bounds enforced.
+const WORLD_VERSION = 3;
 
 function k(x: number, y: number, z: number): Key {
   return `${x},${y},${z}`;
@@ -83,6 +84,24 @@ class WorldStore {
       .maybeSingle();
     if (spawnMeta?.value?.spawn) {
       this.spawnPoint = spawnMeta.value.spawn;
+    }
+    // Safety: reject any stored spawn inside the city bounds (x=40-88, z=40-88)
+    // Force it to the safe platform at (20, 20, 20).
+    if (
+      this.spawnPoint.x >= 40 && this.spawnPoint.x <= 88 &&
+      this.spawnPoint.z >= 40 && this.spawnPoint.z <= 88
+    ) {
+      console.log('[world] Stored spawn is inside city bounds — overriding to safe platform.');
+      this.spawnPoint = { x: 20.5, y: 20, z: 20.5 };
+      await supabase.from('world_meta').upsert({
+        key: 'generated',
+        value: {
+          generated: true,
+          version: WORLD_VERSION,
+          at: new Date().toISOString(),
+          spawn: this.spawnPoint,
+        },
+      });
     }
 
     this.ready = true;

@@ -1188,26 +1188,38 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         others.add(op);
       }
       setSelfColor(payload.you.color);
-      // Safe spawn: ensure clear 3-block column at spawn point
+      // SAFE SPAWN: reject any spawn inside the city bounds (x=40-88, z=40-88).
+      // The city is dense and players get stuck in buildings. Force fallback to (20, 20, 20).
       let safeSp = { ...payload.spawnPoint };
+      const inCityBounds =
+        safeSp.x >= 40 && safeSp.x <= 88 &&
+        safeSp.z >= 40 && safeSp.z <= 88;
+      if (inCityBounds) {
+        console.log('[spawn] Server sent city-bounds spawn, overriding to safe platform');
+        safeSp = { x: 20.5, y: 20, z: 20.5 };
+      }
       const sx = Math.floor(safeSp.x);
       const sz = Math.floor(safeSp.z);
-      let safeY = safeSp.y;
-      // If starting position is inside a block, scan upward for clear space
+      let safeY = Math.floor(safeSp.y);
+      // If inside/under a block, scan upward for a clear 3-block column
       let attempts = 0;
-      while (attempts < 30 && (world.has(sx, Math.floor(safeY), sz) || world.has(sx, Math.floor(safeY) + 1, sz))) {
+      while (attempts < 80 && (world.has(sx, safeY, sz) || world.has(sx, safeY + 1, sz))) {
         safeY++;
         attempts++;
       }
-      safeSp.y = safeY;
+      // Guarantee floor-y of at least 20 so player is never underground
+      if (safeY < 20) safeY = 20;
+      safeSp.y = safeY + 0.01;
       spawnPointRef.current = { x: safeSp.x, y: safeSp.y, z: safeSp.z };
-      player.setPosition(safeSp.x, safeSp.y, safeSp.z);
-      // Aggressively clear spawn area (in case blocks exist above the platform)
-      const sx0 = Math.floor(safeSp.x);
-      const sz0 = Math.floor(safeSp.z);
-      for (let cy = Math.floor(safeSp.y); cy <= Math.floor(safeSp.y) + 3; cy++) {
-        if (world.has(sx0, cy, sz0)) world.removeBlock(sx0, cy, sz0, true);
+      // Force-clear blocks at spawn position AND ensure a ground platform below
+      for (let cy = safeY; cy <= safeY + 3; cy++) {
+        if (world.has(sx, cy, sz)) world.removeBlock(sx, cy, sz, true);
       }
+      if (!world.has(sx, safeY - 1, sz)) {
+        world.addBlock(sx, safeY - 1, sz, 'royal_brick');
+      }
+      player.setPosition(safeSp.x, safeSp.y, safeSp.z);
+      player.velocity.set(0, 0, 0);
       // Give starter pickaxe if player has no tools (first-time players can break blocks)
       const hasPickaxe = inventoryRef.current.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
       if (!hasPickaxe) {
