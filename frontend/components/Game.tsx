@@ -2651,6 +2651,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     // Insomnia: tracks how many nights player hasn't slept (more phantoms)
     let insomniaNights = 0;
     let lastNightCheck = false;
+    // Ambient mob sounds timer
+    let lastAmbientSound = 0;
     // Mining combo: consecutive blocks within 3s increase XP bonus
     let miningCombo = 0;
     let miningComboTimer = 0;
@@ -2731,6 +2733,26 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       parrots.update(dt, camera.position);
       turtles.update(dt, camera.position);
       wardens.update(dt, camera.position);
+
+      // ---- Ambient mob sounds (play random mob sounds every 8-15 seconds) ----
+      if (elapsed - lastAmbientSound > 8 + Math.random() * 7) {
+        lastAmbientSound = elapsed;
+        // Check which mobs are nearby and play their sound
+        const nearCows = cows.getMobs().some(m => m.group.position.distanceTo(camera.position) < 20);
+        const nearPigs = pigs.getMobs().some(m => m.group.position.distanceTo(camera.position) < 20);
+        const nearChickens = chickens.getMobs().some(m => m.group.position.distanceTo(camera.position) < 20);
+        const nearZombies = isNight && zombies.getMobs().some(m => m.group.position.distanceTo(camera.position) < 25);
+        const nearSkeletons = isNight && skeletons.getMobs().some(m => m.group.position.distanceTo(camera.position) < 25);
+        const candidates: (() => void)[] = [];
+        if (nearCows) candidates.push(() => audio.playCowMoo());
+        if (nearPigs) candidates.push(() => audio.playPigOink());
+        if (nearChickens) candidates.push(() => audio.playChickenCluck());
+        if (nearZombies) candidates.push(() => audio.playZombieGroan());
+        if (nearSkeletons) candidates.push(() => audio.playSkeletonRattle());
+        if (candidates.length > 0) {
+          candidates[Math.floor(Math.random() * candidates.length)]();
+        }
+      }
 
       // Enderman spawn at night (rare)
       witches.isNight = isNight;

@@ -702,6 +702,109 @@ export class AudioEngine {
     src.stop(now + 0.3);
   }
 
+  /** Cow moo ambient sound */
+  playCowMoo() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(120, now);
+    osc.frequency.linearRampToValueAtTime(160, now + 0.3);
+    osc.frequency.linearRampToValueAtTime(100, now + 0.8);
+    gain.gain.setValueAtTime(0.02, now);
+    gain.gain.linearRampToValueAtTime(0.04, now + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(400, now);
+    osc.connect(filter).connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.8);
+  }
+
+  /** Pig oink ambient sound */
+  playPigOink() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Two short grunts
+    for (let i = 0; i < 2; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200 + Math.random() * 40, now + i * 0.15);
+      osc.frequency.linearRampToValueAtTime(150, now + i * 0.15 + 0.1);
+      gain.gain.setValueAtTime(0.025, now + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.12);
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(600, now);
+      osc.connect(filter).connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.15);
+      osc.stop(now + i * 0.15 + 0.12);
+    }
+  }
+
+  /** Chicken cluck ambient sound */
+  playChickenCluck() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Quick high chirps
+    for (let i = 0; i < 3; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800 + Math.random() * 200, now + i * 0.08);
+      gain.gain.setValueAtTime(0.02, now + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.06);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.08);
+      osc.stop(now + i * 0.08 + 0.06);
+    }
+  }
+
+  /** Zombie groan ambient sound */
+  playZombieGroan() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.linearRampToValueAtTime(60, now + 0.6);
+    gain.gain.setValueAtTime(0.03, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(300, now);
+    osc.connect(filter).connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.6);
+  }
+
+  /** Skeleton rattle ambient sound */
+  playSkeletonRattle() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Quick bone rattles
+    for (let i = 0; i < 4; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(2000 + Math.random() * 1000, now + i * 0.05);
+      gain.gain.setValueAtTime(0.015, now + i * 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.04);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.05);
+      osc.stop(now + i * 0.05 + 0.04);
+    }
+  }
+
   dispose() {
     if (this.musicInterval) {
       clearInterval(this.musicInterval);

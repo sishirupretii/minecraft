@@ -1180,6 +1180,70 @@ export function generateWorld(seed = 1337): Block[] {
     desertWellsPlaced++;
   }
 
+  // 4.995 Generate mushroom islands (small patches of mycelium with giant mushrooms)
+  const mushroomCount = 1 + Math.floor(rng() * 2);
+  for (let mi = 0; mi < mushroomCount; mi++) {
+    const mx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const mz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    if (Math.abs(mx - half) < 30 && Math.abs(mz - half) < 30) continue;
+    const mh = heightMap[mx][mz];
+    if (mh < SEA_LEVEL) continue;
+    // Mycelium circle (radius 4-6)
+    const mRadius = 4 + Math.floor(rng() * 3);
+    for (let dx = -mRadius; dx <= mRadius; dx++) {
+      for (let dz = -mRadius; dz <= mRadius; dz++) {
+        if (dx * dx + dz * dz > mRadius * mRadius) continue;
+        const bx = mx + dx, bz = mz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        blocks.push({ x: bx, y: mh, z: bz, type: 'moss_block' }); // mycelium = moss_block
+        // Scatter small mushrooms
+        if (rng() < 0.15) {
+          blocks.push({ x: bx, y: mh + 1, z: bz, type: rng() < 0.5 ? 'mushroom_red' : 'mushroom_brown' });
+        }
+      }
+    }
+    // Giant mushroom at center (stem + cap)
+    const stemHeight = 5 + Math.floor(rng() * 3);
+    for (let sy = 1; sy <= stemHeight; sy++) {
+      blocks.push({ x: mx, y: mh + sy, z: mz, type: 'mushroom_brown' });
+    }
+    // Cap (3x3 red mushroom top)
+    for (let cdx = -1; cdx <= 1; cdx++) {
+      for (let cdz = -1; cdz <= 1; cdz++) {
+        const cx = mx + cdx, cz = mz + cdz;
+        if (cx >= 0 && cx < WORLD_SIZE && cz >= 0 && cz < WORLD_SIZE) {
+          blocks.push({ x: cx, y: mh + stemHeight + 1, z: cz, type: 'mushroom_red' });
+        }
+      }
+    }
+  }
+
+  // 4.996 Generate flower meadows (patches of colorful flowers in plains)
+  const meadowCount = 3 + Math.floor(rng() * 4);
+  for (let fi = 0; fi < meadowCount; fi++) {
+    const fx = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const fz = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    if (Math.abs(fx - half) < 30 && Math.abs(fz - half) < 30) continue;
+    const fh = heightMap[fx][fz];
+    if (fh < SEA_LEVEL) continue;
+    // Check it's a grass biome
+    const surfBlock = blocks.find(b => b.x === fx && b.z === fz && b.y === fh);
+    if (!surfBlock || (surfBlock.type !== 'base_blue' && surfBlock.type !== 'moss_block')) continue;
+    const meadowRadius = 3 + Math.floor(rng() * 4);
+    const flowerTypes: BlockType[] = ['mushroom_red', 'mushroom_brown', 'pumpkin', 'melon'];
+    for (let dx = -meadowRadius; dx <= meadowRadius; dx++) {
+      for (let dz = -meadowRadius; dz <= meadowRadius; dz++) {
+        if (dx * dx + dz * dz > meadowRadius * meadowRadius) continue;
+        const bx = fx + dx, bz = fz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        if (rng() < 0.3) {
+          const flowerType = flowerTypes[Math.floor(rng() * flowerTypes.length)];
+          blocks.push({ x: bx, y: fh + 1, z: bz, type: flowerType });
+        }
+      }
+    }
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 
