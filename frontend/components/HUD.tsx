@@ -256,7 +256,7 @@ export default function HUD({
 
       {/* Watermark */}
       <div className="pointer-events-none absolute bottom-3 right-4 text-[11px] font-semibold tracking-[0.2em] text-white/25">
-        BASECRAFT
+        BASEDCRAFT
       </div>
     </>
   );

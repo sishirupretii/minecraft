@@ -1,13 +1,17 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface LeaderboardEntry {
   rank: number;
   username: string;
+  wallet_address?: string | null;
   score: number;
   blocks_placed: number;
+  blocks_broken?: number;
   mobs_killed: number;
+  deaths?: number;
+  base_coins_collected?: number;
   balance_tier: string;
 }
 
@@ -16,7 +20,10 @@ interface Props {
   onClose: () => void;
   entries: LeaderboardEntry[];
   currentUsername: string;
+  onSwitchMode?: (mode: LeaderboardMode) => void;
 }
+
+export type LeaderboardMode = 'score' | 'coins' | 'mobs' | 'blocks';
 
 const TIER_COLORS: Record<string, string> = {
   none:    '#888888',
@@ -31,12 +38,20 @@ function getTierColor(tier: string): string {
   return TIER_COLORS[tier.toLowerCase()] || '#9ca3af';
 }
 
+function shortWallet(addr?: string | null): string {
+  if (!addr) return '';
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
 export default function LeaderboardPanel({
   visible,
   onClose,
   entries,
   currentUsername,
+  onSwitchMode,
 }: Props) {
+  const [mode, setMode] = useState<LeaderboardMode>('coins');
+
   useEffect(() => {
     if (!visible) return;
     const handler = (e: KeyboardEvent) => {
@@ -46,7 +61,27 @@ export default function LeaderboardPanel({
     return () => window.removeEventListener('keydown', handler);
   }, [visible, onClose]);
 
+  useEffect(() => {
+    if (visible && onSwitchMode) onSwitchMode(mode);
+  }, [mode, visible, onSwitchMode]);
+
   if (!visible) return null;
+
+  const primaryColLabel: Record<LeaderboardMode, string> = {
+    score: 'SCORE',
+    coins: '⬢ COINS',
+    mobs: 'KILLS',
+    blocks: 'BLOCKS',
+  };
+
+  function primaryValue(e: LeaderboardEntry): number {
+    switch (mode) {
+      case 'coins': return e.base_coins_collected ?? 0;
+      case 'mobs': return e.mobs_killed ?? 0;
+      case 'blocks': return e.blocks_placed ?? 0;
+      default: return e.score ?? 0;
+    }
+  }
 
   return (
     <div
@@ -58,7 +93,7 @@ export default function LeaderboardPanel({
     >
       <div
         className="bc-panel flex flex-col gap-3 p-6 relative"
-        style={{ maxWidth: '560px', width: '100%' }}
+        style={{ maxWidth: '640px', width: '100%' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close button */}
@@ -93,6 +128,45 @@ export default function LeaderboardPanel({
           LEADERBOARD
         </div>
 
+        {/* Reward banner (Base coins mode) */}
+        {mode === 'coins' && (
+          <div
+            style={{
+              padding: '8px 10px',
+              background: 'linear-gradient(90deg, rgba(0,82,255,0.2), rgba(0,82,255,0.08))',
+              border: '1px solid rgba(0,82,255,0.4)',
+              fontFamily: "'VT323', monospace",
+              fontSize: '15px',
+              color: '#a8c7ff',
+              textShadow: '1px 1px 0 #000',
+            }}
+          >
+            🏆 Top <strong style={{ color: '#fff' }}>Base Coin</strong> collectors win rewards! Connect your wallet so devs can send ETH on Base.
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex gap-1" style={{ borderBottom: '1px solid #333', paddingBottom: '4px' }}>
+          {(['coins', 'score', 'mobs', 'blocks'] as LeaderboardMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '8px',
+                padding: '6px 10px',
+                background: mode === m ? 'rgba(0,82,255,0.35)' : 'rgba(0,0,0,0.35)',
+                border: mode === m ? '1px solid #0052ff' : '1px solid #444',
+                color: mode === m ? '#fff' : '#aaa',
+                cursor: 'pointer',
+                textShadow: '1px 1px 0 #000',
+              }}
+            >
+              {primaryColLabel[m]}
+            </button>
+          ))}
+        </div>
+
         {/* Table header */}
         <div
           className="flex items-center gap-2"
@@ -101,11 +175,12 @@ export default function LeaderboardPanel({
             borderBottom: '1px solid #555',
           }}
         >
-          <span style={{ ...colHeaderStyle, width: '36px' }}>#</span>
+          <span style={{ ...colHeaderStyle, width: '30px' }}>#</span>
           <span style={{ ...colHeaderStyle, flex: 1 }}>PLAYER</span>
-          <span style={{ ...colHeaderStyle, width: '70px', textAlign: 'right' }}>SCORE</span>
-          <span style={{ ...colHeaderStyle, width: '60px', textAlign: 'right' }}>BLOCKS</span>
-          <span style={{ ...colHeaderStyle, width: '50px', textAlign: 'right' }}>KILLS</span>
+          <span style={{ ...colHeaderStyle, width: '120px' }}>WALLET</span>
+          <span style={{ ...colHeaderStyle, width: '70px', textAlign: 'right' }}>
+            {primaryColLabel[mode]}
+          </span>
         </div>
 
         {/* Entries */}
@@ -113,6 +188,19 @@ export default function LeaderboardPanel({
           className="flex flex-col gap-[2px] overflow-y-auto"
           style={{ maxHeight: '400px' }}
         >
+          {entries.length === 0 && (
+            <div
+              style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '16px',
+                color: 'rgba(255,255,255,0.4)',
+                textAlign: 'center',
+                padding: '20px',
+              }}
+            >
+              No players yet — be the first!
+            </div>
+          )}
           {entries.map((entry) => {
             const isCurrentPlayer = entry.username === currentUsername;
             const tierColor = getTierColor(entry.balance_tier);
@@ -121,16 +209,18 @@ export default function LeaderboardPanel({
               entry.rank === 2 ? '#c0c0c0' :
               entry.rank === 3 ? '#cd7f32' :
               'rgba(255,255,255,0.7)';
-
+            const val = primaryValue(entry);
             return (
               <div
-                key={entry.rank}
+                key={`${entry.rank}-${entry.username}`}
                 className="flex items-center gap-2"
                 style={{
                   padding: '5px 8px',
                   background: isCurrentPlayer
                     ? 'rgba(255,215,0,0.12)'
-                    : 'rgba(0,0,0,0.25)',
+                    : mode === 'coins' && entry.rank <= 3
+                      ? 'rgba(0,82,255,0.12)'
+                      : 'rgba(0,0,0,0.25)',
                   border: isCurrentPlayer
                     ? '1px solid rgba(255,215,0,0.35)'
                     : '1px solid transparent',
@@ -139,10 +229,9 @@ export default function LeaderboardPanel({
                     : 'none',
                 }}
               >
-                {/* Rank */}
                 <span
                   style={{
-                    width: '36px',
+                    width: '30px',
                     fontFamily: "'Press Start 2P', monospace",
                     fontSize: '9px',
                     color: rankColor,
@@ -151,8 +240,6 @@ export default function LeaderboardPanel({
                 >
                   {entry.rank}
                 </span>
-
-                {/* Tier dot + Username */}
                 <div className="flex items-center gap-2" style={{ flex: 1, minWidth: 0 }}>
                   <div
                     style={{
@@ -178,45 +265,34 @@ export default function LeaderboardPanel({
                     {entry.username}
                   </span>
                 </div>
-
-                {/* Score */}
+                {/* Wallet (short) */}
+                <span
+                  style={{
+                    width: '120px',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '14px',
+                    color: entry.wallet_address ? '#88aaff' : 'rgba(255,255,255,0.25)',
+                    textShadow: '1px 1px 0 #000',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {entry.wallet_address ? shortWallet(entry.wallet_address) : 'no wallet'}
+                </span>
+                {/* Primary value */}
                 <span
                   style={{
                     width: '70px',
                     fontFamily: "'VT323', monospace",
                     fontSize: '18px',
-                    color: '#fff',
-                    textShadow: '1px 1px 0 #000',
+                    color: mode === 'coins' ? '#5c9cff' : '#fff',
+                    textShadow: mode === 'coins' ? '0 0 6px rgba(0,82,255,0.6), 1px 1px 0 #000' : '1px 1px 0 #000',
                     textAlign: 'right',
+                    fontWeight: 'bold',
                   }}
                 >
-                  {entry.score.toLocaleString()}
-                </span>
-
-                {/* Blocks */}
-                <span
-                  style={{
-                    width: '60px',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '16px',
-                    color: 'rgba(255,255,255,0.6)',
-                    textAlign: 'right',
-                  }}
-                >
-                  {entry.blocks_placed.toLocaleString()}
-                </span>
-
-                {/* Kills */}
-                <span
-                  style={{
-                    width: '50px',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '16px',
-                    color: 'rgba(255,255,255,0.6)',
-                    textAlign: 'right',
-                  }}
-                >
-                  {entry.mobs_killed.toLocaleString()}
+                  {mode === 'coins' && '⬢ '}{val.toLocaleString()}
                 </span>
               </div>
             );

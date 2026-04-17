@@ -367,11 +367,17 @@ export function registerSocketHandlers(io: Server) {
         });
     });
 
-    // ---- Stats tracking ----
-    socket.on('player:stats', async (p: { blocksPlaced: number; blocksBroken: number; mobsKilled: number; deaths: number; playTime: number }) => {
+    // ---- Stats tracking (incremental — client sends deltas since last flush) ----
+    socket.on('player:stats', async (p: {
+      blocksPlaced: number;
+      blocksBroken: number;
+      mobsKilled: number;
+      deaths: number;
+      playTime: number;
+      baseCoinsCollected?: number;
+    }) => {
       const self = players.get(socket.id);
       if (!self) return;
-      // Upsert to player_stats table (increment counters)
       try {
         await supabase.rpc('increment_player_stats', {
           p_username: self.username,
@@ -381,6 +387,7 @@ export function registerSocketHandlers(io: Server) {
           p_mobs_killed: p.mobsKilled ?? 0,
           p_deaths: p.deaths ?? 0,
           p_play_time: p.playTime ?? 0,
+          p_base_coins: p.baseCoinsCollected ?? 0,
         }).then(({ error }) => {
           if (error) console.error('[stats] upsert err:', error.message);
         });
@@ -389,33 +396,50 @@ export function registerSocketHandlers(io: Server) {
       }
     });
 
-    // ---- Leaderboard ----
-    socket.on('leaderboard:get', async () => {
+    // ---- Leaderboard (supports multiple sort modes) ----
+    socket.on('leaderboard:get', async (mode?: string) => {
       try {
+        const sortMode = typeof mode === 'string' ? mode : 'score';
         const { data, error } = await supabase
           .from('player_stats')
-          .select('username, wallet_address, blocks_placed, blocks_broken, mobs_killed, deaths, play_time_seconds')
-          .order('mobs_killed', { ascending: false })
-          .limit(20);
+          .select('username, wallet_address, blocks_placed, blocks_broken, mobs_killed, deaths, play_time_seconds, base_coins_collected')
+          .limit(100);
         if (error) {
           console.error('[leaderboard] err:', error.message);
+          socket.emit('leaderboard:data', []);
           return;
         }
-        const entries = (data ?? []).map((row: any, i: number) => ({
-          rank: i + 1,
+        const entries = (data ?? []).map((row: any) => ({
           username: row.username,
           wallet_address: row.wallet_address,
-          score: (row.mobs_killed ?? 0) * 5 + Math.floor((row.blocks_placed ?? 0) / 10) + Math.floor((row.blocks_broken ?? 0) / 10),
           blocks_placed: row.blocks_placed ?? 0,
+          blocks_broken: row.blocks_broken ?? 0,
           mobs_killed: row.mobs_killed ?? 0,
+          deaths: row.deaths ?? 0,
+          base_coins_collected: row.base_coins_collected ?? 0,
+          score:
+            (row.mobs_killed ?? 0) * 5 +
+            Math.floor((row.blocks_placed ?? 0) / 10) +
+            Math.floor((row.blocks_broken ?? 0) / 10) +
+            (row.base_coins_collected ?? 0) * 10,
           balance_tier: 'none',
+          mode: sortMode,
         }));
-        // Sort by computed score
-        entries.sort((a: any, b: any) => b.score - a.score);
-        entries.forEach((e: any, i: number) => e.rank = i + 1);
-        socket.emit('leaderboard:data', entries);
+        // Sort by requested mode
+        if (sortMode === 'coins' || sortMode === 'base_coins') {
+          entries.sort((a: any, b: any) => b.base_coins_collected - a.base_coins_collected);
+        } else if (sortMode === 'mobs') {
+          entries.sort((a: any, b: any) => b.mobs_killed - a.mobs_killed);
+        } else if (sortMode === 'blocks') {
+          entries.sort((a: any, b: any) => b.blocks_placed - a.blocks_placed);
+        } else {
+          entries.sort((a: any, b: any) => b.score - a.score);
+        }
+        const top = entries.slice(0, 20).map((e: any, i: number) => ({ ...e, rank: i + 1 }));
+        socket.emit('leaderboard:data', top);
       } catch (err) {
         console.error('[leaderboard] err:', err);
+        socket.emit('leaderboard:data', []);
       }
     });
 

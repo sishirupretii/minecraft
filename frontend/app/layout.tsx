@@ -3,7 +3,7 @@ import './globals.css';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'BaseCraft — A voxel world',
+  title: 'BasedCraft — A voxel world on Base',
   description:
     'Multiplayer voxel sandbox. Break, build, and explore with friends.',
   icons: {

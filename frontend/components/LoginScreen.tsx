@@ -90,7 +90,7 @@ export default function LoginScreen({ onLogin }: Props) {
         {/* Title block */}
         <div className="mb-10 flex flex-col items-center">
           <div className="relative flex items-center">
-            <h1 className="mc-title">BASECRAFT</h1>
+            <h1 className="mc-title">BASEDCRAFT</h1>
             <span
               className="mc-splash absolute"
               style={{ right: '-22px', top: '8px' }}

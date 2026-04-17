@@ -6,7 +6,7 @@ const projectId =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '2477519f071cbdacd07cd615e323d413';
 
 export const wagmiConfig = getDefaultConfig({
-  appName: 'BaseCraft',
+  appName: 'BasedCraft',
   projectId,
   chains: [base],
   transports: {

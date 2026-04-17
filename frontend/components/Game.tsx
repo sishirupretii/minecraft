@@ -188,7 +188,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
   // ---- On-chain: Leaderboard ----
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
-  const [leaderboardData, setLeaderboardData] = useState<Array<{ rank: number; username: string; score: number; blocks_placed: number; mobs_killed: number; balance_tier: string }>>([]);
+  const [leaderboardData, setLeaderboardData] = useState<Array<{ rank: number; username: string; wallet_address?: string | null; score: number; blocks_placed: number; blocks_broken?: number; mobs_killed: number; deaths?: number; base_coins_collected?: number; balance_tier: string }>>([]);
 
   // ---- On-chain: Profile ----
   const [profileOpen, setProfileOpen] = useState(false);
@@ -1680,7 +1680,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     };
     // Command-triggered panel opens
     const onProfileOpen = () => setProfileOpen(true);
-    const onLeaderboardOpen = () => { socket.emit('leaderboard:get'); setLeaderboardOpen(true); };
+    const onLeaderboardOpen = () => { socket.emit('leaderboard:get', 'coins'); setLeaderboardOpen(true); };
     const onAchievementsOpen = () => setAchievementsOpen(true);
     const onLandDoClaim = (p: { chunkX: number; chunkZ: number }) => socket.emit('land:claim', p);
     const onLandDoUnclaim = (p: { chunkX: number; chunkZ: number }) => socket.emit('land:unclaim', p);
@@ -1704,19 +1704,39 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     const refreshInterval = setInterval(refreshOnlineList, 1000);
 
-    // ---- Stats flush every 60 seconds ----
+    // ---- Stats flush every 30 seconds (DELTAS since last flush, not totals) ----
+    // Track what was already sent so we only send new changes — otherwise the
+    // backend RPC would increment by totals every minute, inflating values.
+    const flushedStats = {
+      blocksPlaced: 0, blocksBroken: 0, mobsKilled: 0, deaths: 0,
+      playTime: 0, baseCoinsCollected: 0,
+    };
     const statsFlushInterval = setInterval(() => {
       const s = statsRef.current;
-      if (s.blocksPlaced > 0 || s.blocksBroken > 0 || s.mobsKilled > 0 || s.deaths > 0) {
-        socket.emit('player:stats', {
-          blocksPlaced: s.blocksPlaced,
-          blocksBroken: s.blocksBroken,
-          mobsKilled: s.mobsKilled,
-          deaths: s.deaths,
-          playTime: Math.floor(s.playTimeSeconds),
-        });
+      const coins = s.baseCoinsCollected ?? 0;
+      const delta = {
+        blocksPlaced: s.blocksPlaced - flushedStats.blocksPlaced,
+        blocksBroken: s.blocksBroken - flushedStats.blocksBroken,
+        mobsKilled: s.mobsKilled - flushedStats.mobsKilled,
+        deaths: s.deaths - flushedStats.deaths,
+        playTime: Math.floor(s.playTimeSeconds) - flushedStats.playTime,
+        baseCoinsCollected: coins - flushedStats.baseCoinsCollected,
+      };
+      // Only send if something actually changed
+      if (
+        delta.blocksPlaced > 0 || delta.blocksBroken > 0 ||
+        delta.mobsKilled > 0 || delta.deaths > 0 ||
+        delta.baseCoinsCollected > 0 || delta.playTime > 0
+      ) {
+        socket.emit('player:stats', delta);
+        flushedStats.blocksPlaced = s.blocksPlaced;
+        flushedStats.blocksBroken = s.blocksBroken;
+        flushedStats.mobsKilled = s.mobsKilled;
+        flushedStats.deaths = s.deaths;
+        flushedStats.playTime = Math.floor(s.playTimeSeconds);
+        flushedStats.baseCoinsCollected = coins;
       }
-    }, 60000);
+    }, 30000);
 
     // ---- Achievement checker every 10 seconds ----
     const achievementCheckInterval = setInterval(() => {
@@ -4199,7 +4219,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       sunHalo.position.copy(sun.position);
       moon.position.set(-sx * sunRadius, -sy * 150, 40);
 
-      // BASECRAFT sky logo follows camera (always visible in sky)
+      // BASEDCRAFT sky logo follows camera (always visible in sky)
       logoSprite.position.set(camera.position.x, camera.position.y + 120, camera.position.z - 180);
       subSprite.position.set(camera.position.x, camera.position.y + 95, camera.position.z - 180);
       // Fade logo at night (less visible)
@@ -4794,7 +4814,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
       // On-chain panel keybinds
       if (e.key.toLowerCase() === 'l') {
-        socket.emit('leaderboard:get');
+        socket.emit('leaderboard:get', 'coins');
         setLeaderboardOpen(v => !v);
       }
       if (e.key.toLowerCase() === 'p' && !e.ctrlKey) {
@@ -4833,6 +4853,24 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     window.addEventListener('resize', onResize);
 
     return () => {
+      // Final stats flush on unmount so we don't lose this session's coins/kills
+      const s = statsRef.current;
+      const finalCoins = s.baseCoinsCollected ?? 0;
+      const finalDelta = {
+        blocksPlaced: s.blocksPlaced - flushedStats.blocksPlaced,
+        blocksBroken: s.blocksBroken - flushedStats.blocksBroken,
+        mobsKilled: s.mobsKilled - flushedStats.mobsKilled,
+        deaths: s.deaths - flushedStats.deaths,
+        playTime: Math.floor(s.playTimeSeconds) - flushedStats.playTime,
+        baseCoinsCollected: finalCoins - flushedStats.baseCoinsCollected,
+      };
+      if (
+        finalDelta.blocksPlaced > 0 || finalDelta.blocksBroken > 0 ||
+        finalDelta.mobsKilled > 0 || finalDelta.deaths > 0 ||
+        finalDelta.baseCoinsCollected > 0 || finalDelta.playTime > 0
+      ) {
+        socket.emit('player:stats', finalDelta);
+      }
       cancelAnimationFrame(raf);
       clearInterval(refreshInterval);
       clearInterval(statsFlushInterval);
@@ -5649,7 +5687,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             }
 
             if (cmd === 'seed') {
-              appendChat({ username: 'system', message: `🌱 World Seed: BaseCraft-${Math.floor(Date.now() / 86400000)}`, isSystem: true });
+              appendChat({ username: 'system', message: `🌱 World Seed: BasedCraft-${Math.floor(Date.now() / 86400000)}`, isSystem: true });
               return;
             }
 
@@ -6147,6 +6185,10 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         onClose={() => setLeaderboardOpen(false)}
         entries={leaderboardData}
         currentUsername={username}
+        onSwitchMode={(mode) => {
+          const socket = getSocket();
+          socket.emit('leaderboard:get', mode);
+        }}
       />
 
       <AchievementPanel
@@ -6265,7 +6307,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 marginBottom: '12px',
               }}
             >
-              BASECRAFT
+              BASEDCRAFT
             </div>
             {!socketConnected ? (
               <>
