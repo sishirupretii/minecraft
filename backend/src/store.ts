@@ -14,12 +14,12 @@ export const TOKEN_ADDRESS = (process.env.STORE_TOKEN_ADDRESS ||
   '0x53b83E4C2402DcF4Fe17755d51dd92d25c1a67c8') as `0x${string}`;
 const TOKEN_DECIMALS = parseInt(process.env.STORE_TOKEN_DECIMALS || '18', 10);
 
-// USDC on Base — STABLE payment currency for the store. $10 USDC is always $10.
-// Avoids token-price fluctuation killing the store UX.
-export const PAYMENT_ADDRESS = (process.env.STORE_PAYMENT_ADDRESS ||
-  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as `0x${string}`; // USDC Base
-const PAYMENT_DECIMALS = parseInt(process.env.STORE_PAYMENT_DECIMALS || '6', 10);
-export const PAYMENT_SYMBOL = process.env.STORE_PAYMENT_SYMBOL || 'USDC';
+// Payment: $BASEDCRAFT token (USD-pegged — token amount live-calculated from DexScreener price)
+// Every purchase sends tokens to the receiver → direct buy pressure on our token.
+// Item prices stay in USD (stable) but the ACTUAL tokens charged track market price.
+export const PAYMENT_ADDRESS = TOKEN_ADDRESS; // same as our token
+const PAYMENT_DECIMALS = TOKEN_DECIMALS;       // 18
+export const PAYMENT_SYMBOL = process.env.STORE_PAYMENT_SYMBOL || 'BASEDCRAFT';
 
 // Receiver wallet — where USDC purchases land. Env-only, never exposed.
 export const RECEIVER_ADDRESS = (process.env.STORE_RECEIVER_ADDRESS ||
@@ -184,10 +184,17 @@ export async function verifyPurchase(
   if (!receipt) return { ok: false, reason: 'Transaction not found' };
   if (receipt.status !== 'success') return { ok: false, reason: 'Transaction failed on-chain' };
 
-  // Find a Transfer log from USDC TO the receiver
+  // Find a Transfer log from BASEDCRAFT token TO the receiver.
+  // Expected token amount = USD_price / current_token_price × (1 - slippage)
+  // This way our token is the currency, but prices feel stable in USD.
   const paymentAddr = PAYMENT_ADDRESS.toLowerCase();
   const receiverAddr = RECEIVER_ADDRESS.toLowerCase();
-  const expectedRaw = rawAmountForPrice(item.price);
+  const quote = await quoteUsdToTokens(item.price);
+  if (!quote) {
+    return { ok: false, reason: 'Could not fetch token price — try again in a moment' };
+  }
+  // Accept 10% slippage downward (price moved between quote and tx confirmation)
+  const expectedRaw = (quote.rawTokens * 90n) / 100n;
 
   let buyer: string | null = null;
   let transferValue: bigint | null = null;
@@ -214,9 +221,10 @@ export async function verifyPurchase(
   }
 
   if (!buyer || transferValue === null) {
+    const humanExpected = Number(quote.rawTokens) / 10 ** PAYMENT_DECIMALS;
     return {
       ok: false,
-      reason: `No valid Transfer of ${item.price} ${PAYMENT_SYMBOL} to receiver found in tx`,
+      reason: `Required: transfer ≥ ${humanExpected.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${PAYMENT_SYMBOL} (worth \$${item.price}) to receiver. None found.`,
     };
   }
 
@@ -258,6 +266,43 @@ export async function recordPurchase(params: {
     return false;
   }
   return !!data;
+}
+
+// ---------- Live USD→token conversion via DexScreener ----------
+// Cache for 20s to avoid hammering their API
+let _priceCache: { priceUsd: number; fetchedAt: number } | null = null;
+
+export async function getTokenPriceUsd(): Promise<number | null> {
+  if (_priceCache && Date.now() - _priceCache.fetchedAt < 20_000) {
+    return _priceCache.priceUsd;
+  }
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${TOKEN_ADDRESS}`);
+    if (!res.ok) return _priceCache?.priceUsd ?? null;
+    const data: any = await res.json();
+    const pairs: any[] = data?.pairs ?? [];
+    const base8453 = pairs.filter((p) => p?.chainId === 'base' || p?.chainId === '8453' || p?.chainId === 8453);
+    const best = (base8453.length ? base8453 : pairs)
+      .sort((a: any, b: any) => Number(b?.liquidity?.usd ?? 0) - Number(a?.liquidity?.usd ?? 0))[0];
+    const price = Number(best?.priceUsd ?? 0);
+    if (!price || !isFinite(price) || price <= 0) return _priceCache?.priceUsd ?? null;
+    _priceCache = { priceUsd: price, fetchedAt: Date.now() };
+    return price;
+  } catch {
+    return _priceCache?.priceUsd ?? null;
+  }
+}
+
+/** Convert a USD price to a raw token amount using current market price. */
+export async function quoteUsdToTokens(
+  usd: number,
+): Promise<{ priceUsd: number; tokens: number; rawTokens: bigint } | null> {
+  const price = await getTokenPriceUsd();
+  if (!price || price <= 0) return null;
+  const tokens = usd / price;
+  // Convert tokens to raw uint256 with full decimals — use string to avoid float loss
+  const rawTokens = BigInt(Math.ceil(tokens * 10 ** 6)) * 10n ** BigInt(Math.max(0, PAYMENT_DECIMALS - 6));
+  return { priceUsd: price, tokens, rawTokens };
 }
 
 /** Public info safe to expose to clients (no keys, no secrets). */

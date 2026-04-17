@@ -33,13 +33,15 @@ export interface HolderTier {
 }
 
 export interface StoreConfig {
-  // Payment token (USDC) — for BUY
+  // Payment token (= BASEDCRAFT) — for BUY (USD-pegged, live converted)
   paymentAddress?: `0x${string}`;
   paymentDecimals?: number;
   paymentSymbol?: string;
-  // Based Craft token — for BURN + holder tiers
+  // Based Craft token address (same as payment, used for BURN + holder tiers)
   tokenAddress: `0x${string}`;
   tokenDecimals?: number;
+  // Current USD price of the token (live from DexScreener, 0 if unavailable)
+  tokenPriceUsd?: number;
   // Targets
   receiverAddress: `0x${string}`;
   burnAddress: `0x${string}`;
@@ -165,10 +167,19 @@ export default function StorePanel({
     try {
       setBuyingId(item.id);
       setBurnMode(false);
-      // Pay in USDC (6 decimals) to stable-price the store
-      const paymentAddress = config.paymentAddress ?? ('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`);
-      const paymentDecimals = config.paymentDecimals ?? 6;
-      const amount = parseUnits(item.price.toString(), paymentDecimals);
+      // Pay in $BASEDCRAFT — live-convert USD price → tokens using current market
+      const priceUsd = config.tokenPriceUsd ?? 0;
+      if (priceUsd <= 0) {
+        setError('Token price unavailable — try again in a few seconds');
+        setBuyingId(null);
+        return;
+      }
+      const paymentAddress = config.paymentAddress ?? config.tokenAddress;
+      const paymentDecimals = config.paymentDecimals ?? config.tokenDecimals ?? 18;
+      // Pay 5% MORE than quote to comfortably survive price movement + 10% backend tolerance
+      const tokensNeeded = (item.price / priceUsd) * 1.05;
+      // Convert to raw uint via parseUnits (avoids float precision loss)
+      const amount = parseUnits(tokensNeeded.toFixed(6), paymentDecimals);
       const hash = await writeContractAsync({
         address: paymentAddress,
         abi: erc20Abi,
@@ -221,7 +232,18 @@ export default function StorePanel({
   // Use server items if present, otherwise fallback catalog so store is never empty
   const items = (config?.items && config.items.length > 0) ? config.items : FALLBACK_ITEMS;
   const tokenShort = config ? `${config.tokenAddress.slice(0, 6)}…${config.tokenAddress.slice(-4)}` : '';
-  const paymentSymbol = config?.paymentSymbol ?? 'USDC';
+  const paymentSymbol = config?.paymentSymbol ?? 'BASEDCRAFT';
+  const tokenPriceUsd = config?.tokenPriceUsd ?? 0;
+
+  // Format token quantities concisely: 12_345 → "12.3K", 1_234_567 → "1.23M"
+  function formatTokens(n: number): string {
+    if (!isFinite(n)) return '—';
+    if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + 'B';
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(2) + 'K';
+    if (n >= 1) return n.toFixed(0);
+    return n.toFixed(4);
+  }
 
   return (
     <div
@@ -260,8 +282,12 @@ export default function StorePanel({
             color: 'rgba(255,255,255,0.55)',
           }}
         >
-          🛒 Pay in <span style={{ color: '#2fb574' }}>{paymentSymbol}</span> on Base — stable USD prices, no surprises ·
-          🔥 Burn <span style={{ color: '#ff9966' }}>$BASEDCRAFT</span> for perks · Token: <span style={{ color: '#88aaff' }}>{tokenShort}</span>
+          🛒 Prices in <span style={{ color: '#2fb574' }}>USD</span>, paid with <span style={{ color: '#ff9966' }}>${paymentSymbol}</span> at live market rate · 🔥 Burn for perks
+          {tokenPriceUsd > 0 && (
+            <span style={{ marginLeft: '8px', color: '#88aaff' }}>
+              1 token = ${tokenPriceUsd.toFixed(tokenPriceUsd < 0.0001 ? 10 : 6)}
+            </span>
+          )}
         </div>
 
         {/* Holder info banner */}
@@ -366,8 +392,13 @@ export default function StorePanel({
                     {item.description}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                    <span style={{ fontFamily: "'VT323', monospace", fontSize: '16px', color: '#2fb574' }}>
-                      ${item.price} {paymentSymbol}
+                    <span style={{ fontFamily: "'VT323', monospace", fontSize: '14px', color: '#2fb574', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
+                      <span style={{ fontSize: '16px', fontWeight: 'bold' }}>${item.price}</span>
+                      {tokenPriceUsd > 0 && (
+                        <span style={{ fontSize: '12px', color: '#88aaff' }}>
+                          ≈ {formatTokens(item.price / tokenPriceUsd)} ${paymentSymbol}
+                        </span>
+                      )}
                     </span>
                     <button
                       onClick={() => handleBuy(item)}

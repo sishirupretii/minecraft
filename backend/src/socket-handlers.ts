@@ -12,7 +12,7 @@ import {
   WORLD_HEIGHT,
   WORLD_SIZE,
 } from './types';
-import { verifyPurchase, recordPurchase, publicStoreConfig, getItem, verifyBurn, recordBurn, getHolderInfo } from './store';
+import { verifyPurchase, recordPurchase, publicStoreConfig, getItem, verifyBurn, recordBurn, getHolderInfo, getTokenPriceUsd } from './store';
 
 const players: Map<string, PlayerState> = new Map();
 const lastMoveBroadcast: Map<string, number> = new Map();
@@ -485,8 +485,15 @@ export function registerSocketHandlers(io: Server) {
     });
 
     // ---- Store ----
-    socket.on('store:config', () => {
-      socket.emit('store:config', publicStoreConfig());
+    socket.on('store:config', async () => {
+      const cfg = publicStoreConfig();
+      const priceUsd = await getTokenPriceUsd();
+      socket.emit('store:config', { ...cfg, tokenPriceUsd: priceUsd ?? 0 });
+    });
+
+    socket.on('store:price', async () => {
+      const priceUsd = await getTokenPriceUsd();
+      socket.emit('store:price', { tokenPriceUsd: priceUsd ?? 0, fetchedAt: Date.now() });
     });
 
     socket.on('store:purchases', async () => {

@@ -111,6 +111,18 @@ const HEALTH_REGEN_HUNGER_MIN = 14;
 // Starvation: lose HP when hunger = 0
 const STARVATION_RATE = 0.3;
 
+/** Format a price in human-readable USD, avoiding scientific notation.
+ *  0.00000020283 → "0.00000020" (8 sig digits, no 'e-7' junk). */
+function formatReadablePrice(v: number): string {
+  if (!isFinite(v) || v <= 0) return '0';
+  if (v >= 1) return v.toFixed(4);
+  if (v >= 0.01) return v.toFixed(6);
+  // For tiny numbers, keep 4 significant digits but as a plain decimal
+  const exp = Math.floor(Math.log10(v));
+  const decimals = Math.min(18, -exp + 3);
+  return v.toFixed(decimals).replace(/0+$/, '').replace(/\.$/, '');
+}
+
 export default function Game({ username, walletAddress, verifiedBase, ethBalance }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<PlayerController | null>(null);
@@ -209,6 +221,15 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [burnHistory, setBurnHistory] = useState<Array<{ tx_hash: string; perk_id: string; amount: string; created_at: string }>>([]);
   // Live token price (from DexScreener)
   const [tokenPrice, setTokenPrice] = useState<{ priceUsd: number; change24h: number; symbol: string; liquidityUsd?: number; volume24hUsd?: number } | null>(null);
+  // Keep the store's token price fresh (refresh every 20s while open)
+  useEffect(() => {
+    if (!storeOpen) return;
+    const s = getSocket();
+    s.emit('store:price');
+    const iv = setInterval(() => s.emit('store:price'), 20_000);
+    return () => clearInterval(iv);
+  }, [storeOpen]);
+
   // Holder tier XP multiplier: +10% rookie, +25% pro, +50% whale, +100% titan
   const holderXpMult = holderInfo
     ? (holderInfo.tier.id === 'rookie' ? 1.10
@@ -1739,6 +1760,10 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     // Store socket handlers
     const onStoreConfig = (cfg: any) => setStoreConfig(cfg);
+    const onStorePrice = (p: any) => {
+      // Merge live price into existing config
+      setStoreConfig((prev) => prev ? { ...prev, tokenPriceUsd: p?.tokenPriceUsd ?? prev.tokenPriceUsd } : prev);
+    };
     const onStorePurchases = (rows: any[]) => setStoreHistory(rows || []);
     const onStoreResult = (result: any) => {
       if (result?.ok && result?.gameItem && result?.count) {
@@ -1771,6 +1796,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
     };
     socket.on('store:config', onStoreConfig);
+    socket.on('store:price', onStorePrice);
     socket.on('store:purchases', onStorePurchases);
     socket.on('store:result', onStoreResult);
     socket.on('store:burns', onStoreBurns);
@@ -5006,6 +5032,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       socket.off('chat:welcome', onWelcome);
       socket.off('leaderboard:data', onLeaderboardData);
       socket.off('store:config', onStoreConfig);
+      socket.off('store:price', onStorePrice);
       socket.off('store:purchases', onStorePurchases);
       socket.off('store:result', onStoreResult);
       socket.off('store:burns', onStoreBurns);
@@ -5549,7 +5576,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             </span>
           </div>
           <div style={{ fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>
-            ${tokenPrice.priceUsd < 0.01 ? tokenPrice.priceUsd.toExponential(3) : tokenPrice.priceUsd.toFixed(6)}
+            ${formatReadablePrice(tokenPrice.priceUsd)}
           </div>
           {typeof tokenPrice.volume24hUsd === 'number' && tokenPrice.volume24hUsd > 0 && (
             <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.45)' }}>
