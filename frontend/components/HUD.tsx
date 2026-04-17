@@ -23,6 +23,7 @@ interface Props {
   potionTimer?: number;
   beaconActive?: boolean;
   miningCombo?: number;
+  armorDefense?: number;
 }
 
 function getCompassDir(rotY?: number): string {
@@ -62,6 +63,7 @@ export default function HUD({
   potionTimer,
   beaconActive,
   miningCombo,
+  armorDefense,
 }: Props) {
   // Sun is up when the sine of sun-angle is positive. See Game.tsx for the
   // matching expression — keep these in sync.
@@ -235,6 +237,12 @@ export default function HUD({
           <div className="hud-pill" style={{ borderColor: '#ff8844' }}>
             <span style={{ fontSize: '10px' }}>⛏️</span>
             <span style={{ fontSize: '10px', color: '#ff8844' }}>x{miningCombo}</span>
+          </div>
+        )}
+        {armorDefense !== undefined && armorDefense > 0 && (
+          <div className="hud-pill" style={{ borderColor: '#4488cc' }}>
+            <span style={{ fontSize: '10px' }}>🛡</span>
+            <span style={{ fontSize: '10px', color: '#88aaff' }}>{armorDefense}</span>
           </div>
         )}
       </div>

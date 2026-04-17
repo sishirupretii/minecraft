@@ -38,6 +38,10 @@ export interface PlayerStats {
   amethystMined: number;
   luckyDrops: number;
   maxMiningCombo: number;
+  fishCaught: number;
+  foodEaten: number;
+  maxKillStreak: number;
+  currentLevel: number;
 }
 
 export interface LeaderboardEntry {

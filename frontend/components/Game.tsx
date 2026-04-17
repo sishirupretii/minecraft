@@ -23,6 +23,7 @@ import {
   countItem,
   removeItem,
   INVENTORY_SIZE,
+  getArmorDefense,
 } from '@/lib/items';
 import { RECIPES, Recipe, canCraft, craft } from '@/lib/recipes';
 import { getAudio } from '@/lib/audio';
@@ -173,6 +174,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     currentLifeSeconds: 0, walletConnected: false, currentTier: 'none',
     copperMined: 0, amethystMined: 0,
     luckyDrops: 0, maxMiningCombo: 0,
+    fishCaught: 0, foodEaten: 0, maxKillStreak: 0, currentLevel: 0,
   });
 
   // ---- On-chain: Achievements ----
@@ -1802,6 +1804,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             let inv = addItem(inventoryRef.current, catchItem, catchCount);
             inventoryRef.current = inv;
             setInventory(inv);
+            statsRef.current.fishCaught += catchCount;
             setToast(catchMsg);
             setTimeout(() => setToast(null), 2000);
             const { inv: afterFish, broke } = useTool(inventoryRef.current, selectedRef.current);
@@ -1912,6 +1915,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           inventoryRef.current = nextInv;
           setInventory(nextInv);
           audio.playBlockPlace('planks'); // eating sound
+          statsRef.current.foodEaten++;
           setToast(`Ate ${def.label} (+${def.foodRestore} hunger)`);
           setTimeout(() => setToast(null), 2000);
           // Golden apple: also restore health
@@ -2412,6 +2416,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             // Kill streak tracking
             killStreak++;
             killStreakTimer = 8; // 8 second window for next kill
+            if (killStreak > statsRef.current.maxKillStreak) statsRef.current.maxKillStreak = killStreak;
             const streakBonus = killStreak >= 5 ? 3 : killStreak >= 3 ? 2 : 1;
             // Kill feed entry
             const streakText = killStreak >= 3 ? ` (${killStreak}x streak!)` : '';
@@ -3259,6 +3264,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       // Wallet & tier tracking
       statsRef.current.walletConnected = !!walletAddress;
       statsRef.current.currentTier = balanceTier;
+      statsRef.current.currentLevel = xpInfo.level;
 
       // Hurt flash timer → damage overlay
       if (hurtFlashTimer > 0) {
@@ -4009,6 +4015,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         potionTimer={potionTimerRef.current}
         beaconActive={beaconActive}
         miningCombo={miningComboDisplay}
+        armorDefense={getArmorDefense(armor)}
       />
 
       {/* On-chain wallet indicator with tier */}

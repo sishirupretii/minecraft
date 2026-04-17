@@ -72,6 +72,20 @@ export const ACHIEVEMENT_DEFS: AchievementDef[] = [
   { id: 'combo_king', name: 'Combo King', description: 'Reach a 20-block mining streak', icon: '🔥', category: 'mining' },
   { id: 'deaths_10', name: 'Persistent', description: 'Die 10 times', icon: '☠️', category: 'survival' },
   { id: 'miner_10000', name: 'Earth Eater', description: 'Break 10,000 blocks', icon: '🌍', category: 'mining' },
+
+  // Fishing & food
+  { id: 'first_fish', name: 'Angler', description: 'Catch your first fish', icon: '🐟', category: 'exploration' },
+  { id: 'fisher_50', name: 'Master Angler', description: 'Catch 50 fish', icon: '🎣', category: 'exploration' },
+  { id: 'iron_stomach', name: 'Iron Stomach', description: 'Eat 100 food items', icon: '🍖', category: 'survival' },
+
+  // Level milestones
+  { id: 'level_10', name: 'Seasoned', description: 'Reach level 10', icon: '⭐', category: 'survival' },
+  { id: 'level_25', name: 'Veteran', description: 'Reach level 25', icon: '🌟', category: 'survival' },
+  { id: 'level_50', name: 'Legendary', description: 'Reach level 50', icon: '✨', category: 'survival' },
+
+  // Combat feats
+  { id: 'triple_kill', name: 'Triple Kill', description: 'Get a 3-kill streak', icon: '🔥', category: 'combat' },
+  { id: 'killing_spree', name: 'Killing Spree', description: 'Get a 5-kill streak', icon: '🔥', category: 'combat' },
 ];
 
 export function checkNewAchievements(
@@ -133,6 +147,17 @@ export function checkNewAchievements(
     combo_king: stats.maxMiningCombo >= 20,
     deaths_10: stats.deaths >= 10,
     miner_10000: stats.blocksBroken >= 10000,
+    // Fishing & food
+    first_fish: stats.fishCaught >= 1,
+    fisher_50: stats.fishCaught >= 50,
+    iron_stomach: stats.foodEaten >= 100,
+    // Level milestones
+    level_10: stats.currentLevel >= 10,
+    level_25: stats.currentLevel >= 25,
+    level_50: stats.currentLevel >= 50,
+    // Combat feats
+    triple_kill: stats.maxKillStreak >= 3,
+    killing_spree: stats.maxKillStreak >= 5,
   };
   for (const [id, met] of Object.entries(checks)) {
     if (met && !existing.has(id)) {
