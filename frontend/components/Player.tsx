@@ -13,38 +13,41 @@ interface PlayerOptions {
 }
 
 // Per-block-type BARE-HAND break time in seconds.
+// Break times drastically reduced for better player UX — blocks should feel
+// responsive even without a matching tool. Hardness tier is preserved
+// (soft < medium < hard) but values are roughly 1/3 of the old times.
 const BREAK_TIMES: Record<BlockType, number> = {
-  base_blue: 0.45,
-  deep_blue: 0.35,
-  ice_stone: 0.3,
-  cyan_wood: 1.1,
-  sand_blue: 0.35,
-  royal_brick: 1.5,
-  planks: 0.7,
-  cobblestone: 1.6,
-  crafting_table: 0.9,
-  glass: 0.25,          // glass breaks fast
-  torch: 0.1,           // instant-ish
-  iron_ore: 3.0,        // hard — needs pickaxe
-  diamond_ore: 5.0,     // very hard — needs iron+ pickaxe
-  furnace: 2.0,         // stone-like
-  base_block: 2.5,      // Base-themed block — breakable with pickaxe
-  leaves: 0.15,          // fast
+  base_blue: 0.25,
+  deep_blue: 0.2,
+  ice_stone: 0.2,
+  cyan_wood: 0.4,
+  sand_blue: 0.2,
+  royal_brick: 0.5,
+  planks: 0.3,
+  cobblestone: 0.5,
+  crafting_table: 0.3,
+  glass: 0.15,
+  torch: 0.1,
+  iron_ore: 0.9,
+  diamond_ore: 1.5,
+  furnace: 0.7,
+  base_block: 0.8,
+  leaves: 0.1,
   bedrock: 999,          // unbreakable
-  gravel: 0.4,
-  coal_ore: 2.0,
-  gold_ore: 3.0,
-  obsidian: 50.0,        // very hard — needs diamond pickaxe
+  gravel: 0.2,
+  coal_ore: 0.6,
+  gold_ore: 0.9,
+  obsidian: 10.0,
   lava: 999,             // can't mine lava
-  wool: 0.2,
-  bricks: 1.4,
-  bookshelf: 0.7,
-  ladder: 0.3,
-  chest: 0.9,
-  bronze_block: 2.5,
-  silver_block: 3.0,
-  gold_block: 3.5,
-  crystal_block: 4.0,
+  wool: 0.15,
+  bricks: 0.45,
+  bookshelf: 0.3,
+  ladder: 0.2,
+  chest: 0.4,
+  bronze_block: 0.8,
+  silver_block: 0.9,
+  gold_block: 1.0,
+  crystal_block: 1.2,
   tnt: 0.4,
   bed: 0.5,
   campfire: 0.8,
