@@ -248,6 +248,31 @@ export function generateWorld(seed = 1337): Block[] {
     }
   }
 
+  // 2.55 Generate underground lakes (water pools in caves)
+  const underLakeCount = 3 + Math.floor(rng() * 3);
+  for (let l = 0; l < underLakeCount; l++) {
+    const lx = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const lz = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const ly = 3 + Math.floor(rng() * 5); // deep underground
+    const lRadius = 3 + Math.floor(rng() * 3);
+    // Carve out space and fill with water
+    for (let dx = -lRadius; dx <= lRadius; dx++) {
+      for (let dz = -lRadius; dz <= lRadius; dz++) {
+        if (dx * dx + dz * dz > lRadius * lRadius) continue;
+        const bx = lx + dx, bz = lz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        // Water at lake level
+        blocks.push({ x: bx, y: ly, z: bz, type: 'water' });
+        // Clay or gravel floor
+        blocks.push({ x: bx, y: ly - 1, z: bz, type: rng() < 0.4 ? 'clay' : 'gravel' });
+        // Glowstone scattered on ceiling for eerie lighting
+        if (rng() < 0.05) {
+          blocks.push({ x: bx, y: ly + 3, z: bz, type: 'glowstone' });
+        }
+      }
+    }
+  }
+
   // 2.6 Generate rivers using noise-based winding channels
   // River: thin band where riverNoise is close to 0 (within threshold)
   const riverBlocks = new Set<string>();

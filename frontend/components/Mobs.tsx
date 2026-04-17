@@ -1024,6 +1024,16 @@ export class CreeperManager extends BaseMobManager {
     }
     return null;
   }
+
+  /** Returns true if any creeper is currently fusing (about to explode) */
+  isCreeperFusing(): boolean {
+    for (const mob of this.mobs) {
+      if (mob.dead) continue;
+      const fuse = this.fuseTimers.get(mob) ?? 0;
+      if (fuse > 0.1) return true;
+    }
+    return false;
+  }
 }
 
 // --------------------------- Spider (Hostile at Night, Neutral at Day) ---------------------------

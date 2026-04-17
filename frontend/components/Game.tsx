@@ -2698,6 +2698,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     let lastAmbientSound = 0;
     // Day/night transition tracking
     let wasNightLast = false;
+    // Creeper fuse tracking
+    let wasCreeperFusing = false;
     // Mining combo: consecutive blocks within 3s increase XP bonus
     let miningCombo = 0;
     let miningComboTimer = 0;
@@ -2891,6 +2893,12 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       applyMobDamage(zombies.checkAttack(camera.position), 'Slain by Zombie');
       // Skeleton ranged
       applyMobDamage(skeletons.checkRangedAttack(camera.position), 'Shot by Skeleton');
+      // Creeper fuse warning hiss (play once when fuse starts)
+      const creeperFusing = creepers.isCreeperFusing();
+      if (creeperFusing && !wasCreeperFusing) {
+        audio.playCreeperHiss();
+      }
+      wasCreeperFusing = creeperFusing;
       // Creeper explosion
       const creeperResult = creepers.checkExplosion(camera.position, dt);
       if (creeperResult) {
@@ -2911,7 +2919,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             }
           }
         }
-        audio.playBlockBreak('cobblestone');
+        audio.playExplosion();
         // Camera shake from creeper
         const cDist = camera.position.distanceTo(creeperResult.pos);
         if (cDist < 10) {
