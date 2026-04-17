@@ -1348,6 +1348,49 @@ export function generateWorld(seed = 1337): Block[] {
     blocks.push({ x: cx - 2, y: ch + 1, z: cz - 2, type: 'torch' });
   }
 
+  // 4.999 Generate watchtowers (tall stone structures with loot at top)
+  const watchtowerCount = 1 + Math.floor(rng() * 2);
+  for (let wi = 0; wi < watchtowerCount; wi++) {
+    const wx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const wz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    if (Math.abs(wx - half) < 25 && Math.abs(wz - half) < 25) continue;
+    const wh = heightMap[wx][wz];
+    if (wh < SEA_LEVEL) continue;
+    const towerHeight = 8 + Math.floor(rng() * 5);
+    // Stone brick walls (4x4 footprint)
+    for (let ty = 0; ty <= towerHeight; ty++) {
+      for (let tdx = -1; tdx <= 2; tdx++) {
+        for (let tdz = -1; tdz <= 2; tdz++) {
+          const isWall = tdx === -1 || tdx === 2 || tdz === -1 || tdz === 2;
+          if (isWall) {
+            // Window holes
+            if (ty >= 3 && ty <= towerHeight - 2 && ty % 3 === 0 && (tdx === 0 || tdx === 1) && (tdz === -1 || tdz === 2)) continue;
+            if (ty >= 3 && ty <= towerHeight - 2 && ty % 3 === 0 && (tdz === 0 || tdz === 1) && (tdx === -1 || tdx === 2)) continue;
+            blocks.push({ x: wx + tdx, y: wh + 1 + ty, z: wz + tdz, type: 'stone_bricks' });
+          } else if (ty === 0 || ty === towerHeight) {
+            // Floor and roof
+            blocks.push({ x: wx + tdx, y: wh + 1 + ty, z: wz + tdz, type: 'stone_bricks' });
+          }
+        }
+      }
+    }
+    // Battlements on top
+    const battleY = wh + 1 + towerHeight + 1;
+    blocks.push({ x: wx - 1, y: battleY, z: wz - 1, type: 'stone_bricks' });
+    blocks.push({ x: wx + 2, y: battleY, z: wz - 1, type: 'stone_bricks' });
+    blocks.push({ x: wx - 1, y: battleY, z: wz + 2, type: 'stone_bricks' });
+    blocks.push({ x: wx + 2, y: battleY, z: wz + 2, type: 'stone_bricks' });
+    // Torch at top
+    blocks.push({ x: wx, y: wh + 1 + towerHeight + 1, z: wz, type: 'torch' });
+    blocks.push({ x: wx + 1, y: wh + 1 + towerHeight + 1, z: wz + 1, type: 'torch' });
+    // Chest inside at ground level
+    blocks.push({ x: wx, y: wh + 2, z: wz, type: 'barrel' });
+    // Ladder (fence posts as ladder substitute)
+    for (let ly = 1; ly <= towerHeight; ly++) {
+      blocks.push({ x: wx + 1, y: wh + 1 + ly, z: wz - 1, type: 'ladder' });
+    }
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 

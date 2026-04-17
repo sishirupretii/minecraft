@@ -4044,6 +4044,23 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 scene.add(smokeMesh);
                 torchParticles.push({ mesh: smokeMesh, age: 0, life: 2.0 + Math.random(), baseY: ty + 1.0 });
               }
+              // Nether portal swirl particles
+              if (world.getType(tx, ty, tz) === 'nether_portal' && torchParticles.length < 50 && Math.random() < 0.4) {
+                const portalMat = new THREE.MeshStandardMaterial({
+                  color: Math.random() > 0.5 ? 0x8844cc : 0xaa22ff,
+                  emissive: 0x6622aa, emissiveIntensity: 1.0,
+                  transparent: true, opacity: 0.7,
+                });
+                const portalMesh = new THREE.Mesh(torchParticleGeom, portalMat);
+                portalMesh.position.set(
+                  tx + 0.5 + (Math.random() - 0.5) * 0.8,
+                  ty + Math.random(),
+                  tz + 0.5 + (Math.random() - 0.5) * 0.8,
+                );
+                portalMesh.castShadow = false;
+                scene.add(portalMesh);
+                torchParticles.push({ mesh: portalMesh, age: 0, life: 1.2 + Math.random() * 0.8, baseY: ty + 0.5 });
+              }
               // Enchanting table rune particles (magical purple sparkles orbiting)
               if (world.getType(tx, ty, tz) === 'enchanting_table' && torchParticles.length < 50 && Math.random() < 0.5) {
                 const runeColors = [0xaa44ff, 0x8822dd, 0xcc66ff, 0x6611bb];
@@ -5402,6 +5419,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         tierLabel={tierInfo.label}
         tierColor={tierInfo.color}
         deathCause={deathCause}
+        deaths={statsRef.current.deaths}
       />
 
       {/* Achievement toast */}

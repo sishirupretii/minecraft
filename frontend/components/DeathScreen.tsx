@@ -1,5 +1,7 @@
 'use client';
 
+import { useMemo } from 'react';
+
 interface Props {
   visible: boolean;
   onRespawn: () => void;
@@ -8,9 +10,52 @@ interface Props {
   tierLabel?: string;
   tierColor?: string;
   deathCause?: string;
+  deaths?: number;
 }
 
-export default function DeathScreen({ visible, onRespawn, score, keepSlots = 0, tierLabel, tierColor, deathCause }: Props) {
+const DEATH_TIPS = [
+  'Craft armor to reduce incoming damage',
+  'Cooked food restores more hunger than raw',
+  'Shields block 50% of incoming damage',
+  'Enchant your weapons for bonus effects',
+  'Fire Resistance potions make you immune to lava',
+  'Torches keep hostile mobs away at night',
+  'Diamond tier players keep all items on death',
+  'Always carry a bed to set your spawn point',
+  'Higher tiers earn XP faster — connect your wallet!',
+  'Press CTRL to sprint away from danger',
+  'Beacons give speed, regen, and strength buffs',
+  'Hay bales reduce fall damage by 80%',
+  'Use /sethome to save custom teleport points',
+  'Campfires automatically cook raw food nearby',
+  'Build shelter before your first night!',
+];
+
+const DEATH_TITLES: Record<string, string[]> = {
+  default: ['YOU DIED', 'GAME OVER', 'WASTED', 'DEFEATED'],
+  lava: ['BURNED', 'CRISPY', 'MELTED'],
+  fall: ['SPLAT', 'GRAVITY WINS', 'YOU DIED'],
+  drown: ['GLUB GLUB', 'DROWNED', 'YOU DIED'],
+  starve: ['FAMISHED', 'STARVED', 'YOU DIED'],
+  void: ['INTO THE VOID', 'GONE', 'YOU DIED'],
+};
+
+function getDeathTitle(cause?: string): string {
+  if (!cause) return 'YOU DIED';
+  const lower = cause.toLowerCase();
+  let pool = DEATH_TITLES.default;
+  if (lower.includes('lava') || lower.includes('fire') || lower.includes('burn')) pool = DEATH_TITLES.lava;
+  else if (lower.includes('fell') || lower.includes('fall')) pool = DEATH_TITLES.fall;
+  else if (lower.includes('drown') || lower.includes('water')) pool = DEATH_TITLES.drown;
+  else if (lower.includes('starv') || lower.includes('hunger')) pool = DEATH_TITLES.starve;
+  else if (lower.includes('void')) pool = DEATH_TITLES.void;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+export default function DeathScreen({ visible, onRespawn, score, keepSlots = 0, tierLabel, tierColor, deathCause, deaths }: Props) {
+  const title = useMemo(() => getDeathTitle(deathCause), [deathCause]);
+  const tip = useMemo(() => DEATH_TIPS[Math.floor(Math.random() * DEATH_TIPS.length)], [visible]);
+
   if (!visible) return null;
 
   return (
@@ -28,7 +73,7 @@ export default function DeathScreen({ visible, onRespawn, score, keepSlots = 0, 
           letterSpacing: '4px',
         }}
       >
-        YOU DIED
+        {title}
       </div>
 
       {deathCause && (
@@ -50,10 +95,24 @@ export default function DeathScreen({ visible, onRespawn, score, keepSlots = 0, 
             fontFamily: "'VT323', monospace",
             fontSize: '22px',
             color: 'rgba(255,200,100,0.9)',
-            marginBottom: '8px',
+            marginBottom: '4px',
           }}
         >
           Level: {score}
+        </div>
+      )}
+
+      {/* Death count */}
+      {deaths !== undefined && deaths > 0 && (
+        <div
+          style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '16px',
+            color: 'rgba(255,255,255,0.35)',
+            marginBottom: '8px',
+          }}
+        >
+          Deaths: {deaths}
         </div>
       )}
 
@@ -63,7 +122,7 @@ export default function DeathScreen({ visible, onRespawn, score, keepSlots = 0, 
           fontFamily: "'VT323', monospace",
           fontSize: '18px',
           color: keepSlots >= 36 ? '#88ff88' : keepSlots > 0 ? '#ffcc44' : '#ff8888',
-          marginBottom: '20px',
+          marginBottom: '12px',
           textAlign: 'center',
         }}
       >
@@ -78,6 +137,20 @@ export default function DeathScreen({ visible, onRespawn, score, keepSlots = 0, 
         ) : (
           <span>All items will be lost!</span>
         )}
+      </div>
+
+      {/* Random tip */}
+      <div
+        style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '14px',
+          color: 'rgba(255,255,150,0.5)',
+          marginBottom: '16px',
+          textAlign: 'center',
+          maxWidth: '400px',
+        }}
+      >
+        💡 Tip: {tip}
       </div>
 
       {/* Tip for non-wallet users */}
