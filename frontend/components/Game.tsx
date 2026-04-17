@@ -1880,6 +1880,15 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
       setTimeout(() => setToast(null), 6000);
     };
+    const onArenaQueueResult = (p: any) => {
+      if (p?.ok === true) {
+        setToast('✅ Joined arena queue — waiting for opponent...');
+        setTimeout(() => setToast(null), 3500);
+      } else if (p?.ok === false) {
+        setToast(`⚠ Queue: ${p?.reason ?? 'unknown error'}`);
+        setTimeout(() => setToast(null), 4000);
+      }
+    };
     const onArenaYouAreFighting = (p: any) => {
       setArenaState(p.match);
       setToast(`⚔ You're fighting ${p.side === 'a' ? p.match.playerB : p.match.playerA}! Get ready!`);
@@ -1893,6 +1902,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
     };
     socket.on('arena:state', onArenaState);
+    socket.on('arena:queue_result', onArenaQueueResult);
     socket.on('arena:match_opened', onArenaMatchOpened);
     socket.on('arena:fight_begin', onArenaFightBegin);
     socket.on('arena:match_ended', onArenaMatchEnded);
@@ -5190,6 +5200,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       socket.off('store:holder_info', onHolderInfo);
       socket.off('store:burn_result', onBurnResult);
       socket.off('arena:state', onArenaState);
+      socket.off('arena:queue_result', onArenaQueueResult);
       socket.off('arena:match_opened', onArenaMatchOpened);
       socket.off('arena:fight_begin', onArenaFightBegin);
       socket.off('arena:match_ended', onArenaMatchEnded);
@@ -6386,11 +6397,16 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             if (cmd === 'arena' || cmd === 'pvp' || cmd === 'fight') {
               const s = getSocket();
               s.emit('arena:state');
-              // Auto-queue unless they type /arena watch / /arena leave
               const sub = parts[1]?.toLowerCase();
-              if (sub === 'leave') s.emit('arena:queue_leave');
-              else if (sub === 'watch' || sub === 'view') { /* just open */ }
-              else s.emit('arena:queue_join');
+              if (sub === 'leave') {
+                s.emit('arena:queue_leave');
+                appendChat({ username: 'system', message: '⚔ Left arena queue', isSystem: true });
+              } else if (sub === 'watch' || sub === 'view') {
+                appendChat({ username: 'system', message: '👀 Opening arena viewer (no queue)', isSystem: true });
+              } else {
+                s.emit('arena:queue_join');
+                appendChat({ username: 'system', message: '⚔ Joining arena queue… waiting for opponent', isSystem: true });
+              }
               setArenaOpen(true);
               return;
             }

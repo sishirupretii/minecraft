@@ -796,14 +796,21 @@ export function registerSocketHandlers(io: Server) {
 
     socket.on('arena:queue_join', () => {
       const self = players.get(socket.id);
-      if (!self) return;
+      if (!self) {
+        socket.emit('arena:queue_result', { ok: false, reason: 'Not joined yet — refresh the page' });
+        return;
+      }
       const res = joinQueue(self.username, self.walletAddress ?? null);
       socket.emit('arena:queue_result', { ...res, spawn: { a: ARENA_SPAWN_A, b: ARENA_SPAWN_B } });
+      console.log(`[arena] ${self.username} join request → ${res.ok ? 'OK' : res.reason}`);
     });
 
     socket.on('arena:queue_leave', () => {
       const self = players.get(socket.id);
-      if (!self) return;
+      if (!self) {
+        socket.emit('arena:queue_result', { ok: false, reason: 'Not joined yet' });
+        return;
+      }
       const ok = leaveQueue(self.username);
       socket.emit('arena:queue_result', { ok });
     });
