@@ -123,13 +123,27 @@ export function unregisterArenaSocket(username: string) {
   // Also remove from queue if they leave
   const idx = queue.indexOf(username);
   if (idx >= 0) queue.splice(idx, 1);
-  // If they were a fighter in the active match, they forfeit
-  if (currentMatch && currentMatch.phase === 'active') {
-    if (currentMatch.playerA === username) {
-      endMatch(currentMatch.playerB, 'Opponent disconnected');
-    } else if (currentMatch.playerB === username) {
-      endMatch(currentMatch.playerA, 'Opponent disconnected');
-    }
+  if (!currentMatch) return;
+  const isFighter = currentMatch.playerA === username || currentMatch.playerB === username;
+  if (!isFighter) return;
+  // During BETTING phase → cancel match, refund bets, put remaining fighter back at top of queue
+  if (currentMatch.phase === 'betting') {
+    const remaining = currentMatch.playerA === username ? currentMatch.playerB : currentMatch.playerA;
+    endMatch(null, 'Opponent disconnected before fight — bets refunded');
+    // Re-queue remaining fighter
+    setTimeout(() => {
+      if (!queue.includes(remaining) && socketByUsername.has(remaining)) {
+        queue.unshift(remaining);
+        broadcastState();
+        tryStartMatch();
+      }
+    }, 500);
+    return;
+  }
+  // During ACTIVE phase → opponent wins (forfeit)
+  if (currentMatch.phase === 'active') {
+    if (currentMatch.playerA === username) endMatch(currentMatch.playerB, 'Opponent disconnected — win by forfeit');
+    else endMatch(currentMatch.playerA, 'Opponent disconnected — win by forfeit');
   }
 }
 

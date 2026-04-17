@@ -1491,6 +1491,70 @@ export function generateWorld(seed = 1337): Block[] {
   blocks.push({ x: SPAWN_X - 2, y: SPAWN_PLATFORM_Y, z: SPAWN_Z - 2, type: 'base_block' });
   blocks.push({ x: SPAWN_X - 2, y: SPAWN_PLATFORM_Y + 1, z: SPAWN_Z - 2, type: 'base_block' });
 
+  // ---- PVP ARENA (COLISEUM) ----
+  // Fight floor at y=21, fighters teleport in at y=22, walls prevent them
+  // falling off. Centered at (44, 8) — outside city, outside spawn zone.
+  const ARENA_X = 44;    // center x
+  const ARENA_Z = 8;     // center z
+  const ARENA_FLOOR = 21;
+  const ARENA_HALF_X = 8;  // 17-wide arena
+  const ARENA_HALF_Z = 6;  // 13-deep arena
+  const ARENA_WALL_H = 4;
+  // Clear any existing blocks in the arena volume
+  for (let ax = ARENA_X - ARENA_HALF_X - 1; ax <= ARENA_X + ARENA_HALF_X + 1; ax++) {
+    for (let az = ARENA_Z - ARENA_HALF_Z - 1; az <= ARENA_Z + ARENA_HALF_Z + 1; az++) {
+      for (let ay = ARENA_FLOOR; ay <= ARENA_FLOOR + ARENA_WALL_H + 4; ay++) {
+        // Mark these spots for deletion by filtering later via dedupe
+      }
+    }
+  }
+  // Stone-brick floor
+  for (let ax = ARENA_X - ARENA_HALF_X; ax <= ARENA_X + ARENA_HALF_X; ax++) {
+    for (let az = ARENA_Z - ARENA_HALF_Z; az <= ARENA_Z + ARENA_HALF_Z; az++) {
+      if (ax < 0 || ax >= WORLD_SIZE || az < 0 || az >= WORLD_SIZE) continue;
+      blocks.push({ x: ax, y: ARENA_FLOOR, z: az, type: 'stone_bricks' });
+      // Clear above floor up to wall top + 3 (so players don't spawn in blocks)
+      for (let ay = ARENA_FLOOR + 1; ay <= ARENA_FLOOR + ARENA_WALL_H + 3; ay++) {
+        // dedupe will drop these if terrain put a block there
+      }
+    }
+  }
+  // 4-tall walls around perimeter (leaves top open for spectator view)
+  for (let wh = 1; wh <= ARENA_WALL_H; wh++) {
+    for (let ax = ARENA_X - ARENA_HALF_X; ax <= ARENA_X + ARENA_HALF_X; ax++) {
+      if (ax < 0 || ax >= WORLD_SIZE) continue;
+      const zMin = ARENA_Z - ARENA_HALF_Z;
+      const zMax = ARENA_Z + ARENA_HALF_Z;
+      if (zMin >= 0 && zMin < WORLD_SIZE) blocks.push({ x: ax, y: ARENA_FLOOR + wh, z: zMin, type: 'cobblestone' });
+      if (zMax >= 0 && zMax < WORLD_SIZE) blocks.push({ x: ax, y: ARENA_FLOOR + wh, z: zMax, type: 'cobblestone' });
+    }
+    for (let az = ARENA_Z - ARENA_HALF_Z; az <= ARENA_Z + ARENA_HALF_Z; az++) {
+      if (az < 0 || az >= WORLD_SIZE) continue;
+      const xMin = ARENA_X - ARENA_HALF_X;
+      const xMax = ARENA_X + ARENA_HALF_X;
+      if (xMin >= 0 && xMin < WORLD_SIZE) blocks.push({ x: xMin, y: ARENA_FLOOR + wh, z: az, type: 'cobblestone' });
+      if (xMax >= 0 && xMax < WORLD_SIZE) blocks.push({ x: xMax, y: ARENA_FLOOR + wh, z: az, type: 'cobblestone' });
+    }
+  }
+  // Corner pillars with torches for visibility
+  const corners = [
+    [ARENA_X - ARENA_HALF_X, ARENA_Z - ARENA_HALF_Z],
+    [ARENA_X + ARENA_HALF_X, ARENA_Z - ARENA_HALF_Z],
+    [ARENA_X - ARENA_HALF_X, ARENA_Z + ARENA_HALF_Z],
+    [ARENA_X + ARENA_HALF_X, ARENA_Z + ARENA_HALF_Z],
+  ];
+  for (const [cx, cz] of corners) {
+    if (cx >= 0 && cx < WORLD_SIZE && cz >= 0 && cz < WORLD_SIZE) {
+      for (let h = 1; h <= ARENA_WALL_H + 1; h++) {
+        blocks.push({ x: cx, y: ARENA_FLOOR + h, z: cz, type: 'stone_bricks' });
+      }
+      blocks.push({ x: cx, y: ARENA_FLOOR + ARENA_WALL_H + 2, z: cz, type: 'torch' });
+    }
+  }
+  // Marker blocks at fighter spawn positions (under their feet, Base-blue tint)
+  blocks.push({ x: 40, y: ARENA_FLOOR, z: 8, type: 'base_block' });
+  blocks.push({ x: 48, y: ARENA_FLOOR, z: 8, type: 'base_block' });
+
   // ---- FINAL DEDUPE ----
   // World-gen may produce multiple blocks at the same (x,y,z) (overlapping
   // structures, spawn platform over terrain, etc). Supabase bulk upsert fails

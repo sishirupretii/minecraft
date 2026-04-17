@@ -9,7 +9,8 @@ type Key = string; // "x,y,z"
 // the persisted world_meta.version doesn't match, we wipe the blocks table
 // and regenerate from scratch. v2 = biomes (plains / desert / snow).
 // v3 = safe spawn platform at (20,20,20), city bounds enforced.
-const WORLD_VERSION = 3;
+// v4 = PvP arena coliseum structure at (44, 21, 8) — floor + walls + corner pillars.
+const WORLD_VERSION = 4;
 
 function k(x: number, y: number, z: number): Key {
   return `${x},${y},${z}`;
