@@ -86,6 +86,18 @@ export const ACHIEVEMENT_DEFS: AchievementDef[] = [
   // Combat feats
   { id: 'triple_kill', name: 'Triple Kill', description: 'Get a 3-kill streak', icon: '🔥', category: 'combat' },
   { id: 'killing_spree', name: 'Killing Spree', description: 'Get a 5-kill streak', icon: '🔥', category: 'combat' },
+
+  // Batch 42: More achievements
+  { id: 'rampage', name: 'Rampage', description: 'Get a 10-kill streak', icon: '💥', category: 'combat' },
+  { id: 'fisher_100', name: 'Fish Monger', description: 'Catch 100 fish', icon: '🐠', category: 'exploration' },
+  { id: 'glutton', name: 'Glutton', description: 'Eat 500 food items', icon: '🍗', category: 'survival' },
+  { id: 'miner_25000', name: 'Deep Earth', description: 'Break 25,000 blocks', icon: '💎', category: 'mining' },
+  { id: 'builder_25000', name: 'City Planner', description: 'Place 25,000 blocks', icon: '🏙️', category: 'building' },
+  { id: 'traveler_10000', name: 'World Walker', description: 'Walk 10,000 blocks', icon: '🌏', category: 'exploration' },
+  { id: 'enchanter_10', name: 'Spellweaver', description: 'Enchant 10 items', icon: '🪄', category: 'exploration' },
+  { id: 'crafter_500', name: 'Factory', description: 'Craft 500 items', icon: '🏭', category: 'building' },
+  { id: 'deaths_50', name: 'Never Give Up', description: 'Die 50 times', icon: '💪', category: 'survival' },
+  { id: 'no_death_60', name: 'Immortal', description: 'Play 60 min without dying', icon: '👼', category: 'survival' },
 ];
 
 export function checkNewAchievements(
@@ -158,6 +170,17 @@ export function checkNewAchievements(
     // Combat feats
     triple_kill: stats.maxKillStreak >= 3,
     killing_spree: stats.maxKillStreak >= 5,
+    // Batch 42
+    rampage: stats.maxKillStreak >= 10,
+    fisher_100: stats.fishCaught >= 100,
+    glutton: stats.foodEaten >= 500,
+    miner_25000: stats.blocksBroken >= 25000,
+    builder_25000: stats.blocksPlaced >= 25000,
+    traveler_10000: stats.distanceWalked >= 10000,
+    enchanter_10: stats.itemsEnchanted >= 10,
+    crafter_500: stats.itemsCrafted >= 500,
+    deaths_50: stats.deaths >= 50,
+    no_death_60: stats.longestLifeSeconds >= 3600,
   };
   for (const [id, met] of Object.entries(checks)) {
     if (met && !existing.has(id)) {

@@ -48,6 +48,9 @@ const CONTROLS = [
     { key: '/home', action: 'Teleport to spawn' },
     { key: '/heal', action: 'Full heal (Gold+)' },
     { key: '/pos', action: 'Share position in chat' },
+    { key: '/fly', action: 'Toggle flight (Diamond)' },
+    { key: '/gamemode', action: 'Switch mode (Diamond)' },
+    { key: '/bal', action: 'Show wallet balance' },
   ]},
   { category: 'OTHER', items: [
     { key: 'F3', action: 'Debug Info (Coords/FPS)' },

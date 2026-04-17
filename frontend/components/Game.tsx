@@ -910,6 +910,21 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       const fz = Math.floor(player.position.z);
       const footBlock = world.getType(fx, fy, fz);
       audio.playFootstep(footBlock ?? undefined);
+      // Sprint particles: kick up dirt behind the player when moving fast
+      const hSpeed = Math.sqrt(player.velocity.x ** 2 + player.velocity.z ** 2);
+      if (hSpeed > 5.5 && footBlock && footBlock !== 'water') {
+        const blockColor = BLOCKS[footBlock as BlockType]?.color ?? 0x8B7355;
+        const mat = new THREE.MeshStandardMaterial({ color: blockColor, roughness: 1, transparent: true, opacity: 0.6 });
+        const m = new THREE.Mesh(particleGeom, mat);
+        m.position.set(player.position.x + (Math.random() - 0.5) * 0.4, fy + 1.05, player.position.z + (Math.random() - 0.5) * 0.4);
+        m.castShadow = false; m.receiveShadow = false;
+        scene.add(m);
+        particles.push({
+          mesh: m,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * 1.5, 0.3 + Math.random() * 0.8, (Math.random() - 0.5) * 1.5),
+          age: 0, life: 0.25 + Math.random() * 0.2,
+        });
+      }
     };
     // Q key: drop held item
     player.onDropItem = () => {
@@ -956,6 +971,20 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       cameraShakeIntensity = Math.min(0.15, reducedDmg * 0.02);
       audio.playBlockBreak('gravel'); // impact sound
       setDeathCause('Fell from a high place');
+      // Fall damage particles (dirt/dust puff)
+      const landColor = blockBelow === 'sand_blue' ? 0xc2b280 : blockBelow === 'snow_block' ? 0xffffff : 0x8B7355;
+      for (let i = 0; i < Math.min(12, reducedDmg * 2); i++) {
+        const mat = new THREE.MeshStandardMaterial({ color: landColor, roughness: 1, transparent: true, opacity: 0.8 });
+        const m = new THREE.Mesh(particleGeom, mat);
+        m.position.set(px + Math.random(), py + 1.1, pz + Math.random());
+        m.castShadow = false; m.receiveShadow = false;
+        scene.add(m);
+        particles.push({
+          mesh: m,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * 3, 0.5 + Math.random() * 2, (Math.random() - 0.5) * 3),
+          age: 0, life: 0.4 + Math.random() * 0.3,
+        });
+      }
     };
     // Void death: kill player if they fall into void
     player.onVoidDeath = () => {
@@ -4218,6 +4247,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     >
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
 
+      {/* Underwater blue tint overlay */}
+      {breath < 10 && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(10,40,80,0.35) 0%, rgba(5,20,60,0.55) 100%)',
+            zIndex: 1,
+            transition: 'opacity 0.3s ease',
+          }}
+        />
+      )}
+
       <HUD
         coords={coords}
         showCoords={showCoords}
@@ -4823,6 +4864,44 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'fly') {
+              // /fly — toggle creative flight (Diamond tier only)
+              if (balanceTier !== 'diamond') {
+                appendChat({ username: 'system', message: '💎 /fly requires Diamond tier', isSystem: true });
+                return;
+              }
+              const p = playerRef.current;
+              if (p) {
+                p.flying = !p.flying;
+                appendChat({ username: 'system', message: p.flying ? '🕊️ Flight enabled! Space=Up, Shift=Down' : '🚶 Flight disabled', isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'gamemode' || cmd === 'gm') {
+              // /gamemode <0|1|s|c> — toggle survival/creative (Diamond tier only)
+              if (balanceTier !== 'diamond') {
+                appendChat({ username: 'system', message: '💎 /gamemode requires Diamond tier', isSystem: true });
+                return;
+              }
+              const mode = parts[1]?.toLowerCase();
+              const p = playerRef.current;
+              if (mode === '1' || mode === 'c' || mode === 'creative') {
+                if (p) p.flying = true;
+                invulnerableRef.current = true;
+                setInvulnerable(true);
+                appendChat({ username: 'system', message: '🎮 Creative mode: Flight ON, Invulnerable', isSystem: true });
+              } else if (mode === '0' || mode === 's' || mode === 'survival') {
+                if (p) p.flying = false;
+                invulnerableRef.current = false;
+                setInvulnerable(false);
+                appendChat({ username: 'system', message: '🎮 Survival mode: Flight OFF, Vulnerable', isSystem: true });
+              } else {
+                appendChat({ username: 'system', message: '❌ Usage: /gamemode <0|1|s|c>', isSystem: true });
+              }
+              return;
+            }
+
             if (cmd === 'balance' || cmd === 'bal') {
               if (!walletAddress) {
                 appendChat({ username: 'system', message: '⛓️ Connect your wallet to see balance', isSystem: true });
@@ -4834,7 +4913,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             }
 
             if (cmd === 'help') {
-              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /help', isSystem: true });
+              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gamemode, /help', isSystem: true });
               return;
             }
 

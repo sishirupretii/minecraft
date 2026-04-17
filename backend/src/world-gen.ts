@@ -1085,6 +1085,101 @@ export function generateWorld(seed = 1337): Block[] {
     placedOasis++;
   }
 
+  // 4.98 Generate ancient ruins (crumbled stone structures, 1-3 per world)
+  const ruinCount = 1 + Math.floor(rng() * 3);
+  for (let ri = 0; ri < ruinCount; ri++) {
+    const rx = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const rz = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    if (Math.abs(rx - half) < 30 && Math.abs(rz - half) < 30) continue; // skip city
+    const ry = heightMap[rx][rz];
+    if (ry < SEA_LEVEL) continue;
+    const ruinSize = 4 + Math.floor(rng() * 3); // 4-6 radius
+    // Crumbled walls with gaps
+    for (let dx = -ruinSize; dx <= ruinSize; dx++) {
+      for (let dz = -ruinSize; dz <= ruinSize; dz++) {
+        const bx = rx + dx, bz = rz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        const isWall = Math.abs(dx) === ruinSize || Math.abs(dz) === ruinSize;
+        if (!isWall) continue;
+        // Random gaps in walls for "ruined" look
+        if (rng() < 0.3) continue;
+        const wallHeight = 1 + Math.floor(rng() * 3); // 1-3 blocks tall (crumbled)
+        for (let dy = 0; dy < wallHeight; dy++) {
+          blocks.push({ x: bx, y: ry + 1 + dy, z: bz, type: rng() < 0.6 ? 'mossy_cobblestone' : 'stone_bricks' });
+        }
+      }
+    }
+    // Floor: mossy cobblestone
+    for (let dx = -ruinSize + 1; dx < ruinSize; dx++) {
+      for (let dz = -ruinSize + 1; dz < ruinSize; dz++) {
+        const bx = rx + dx, bz = rz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        if (rng() < 0.5) blocks.push({ x: bx, y: ry, z: bz, type: 'mossy_cobblestone' });
+      }
+    }
+    // Center: chest with loot + torch
+    blocks.push({ x: rx, y: ry + 1, z: rz, type: 'chest' });
+    blocks.push({ x: rx + 1, y: ry + 1, z: rz, type: 'torch' });
+    // Vine decorations on remaining walls
+    for (let dx = -ruinSize; dx <= ruinSize; dx += ruinSize * 2) {
+      const bx = rx + dx;
+      if (bx >= 0 && bx < WORLD_SIZE && rz >= 0 && rz < WORLD_SIZE) {
+        if (rng() < 0.5) blocks.push({ x: bx, y: ry + 1, z: rz, type: 'vine' });
+      }
+    }
+  }
+
+  // 4.99 Generate desert wells (terracotta wells with water, 1-2 per world)
+  let desertWellsPlaced = 0;
+  let desertWellAttempts = 0;
+  while (desertWellsPlaced < 2 && desertWellAttempts < 80) {
+    desertWellAttempts++;
+    const wx = 5 + Math.floor(rng() * (WORLD_SIZE - 10));
+    const wz = 5 + Math.floor(rng() * (WORLD_SIZE - 10));
+    if (Math.abs(wx - half) < 30 && Math.abs(wz - half) < 30) continue;
+    const wy = heightMap[wx][wz];
+    if (wy < SEA_LEVEL) continue;
+    // Check for desert biome (sand_blue surface)
+    const surfBlock = blocks.find(b => b.x === wx && b.z === wz && b.y === wy);
+    if (!surfBlock || surfBlock.type !== 'sand_blue') continue;
+    // Build well: terracotta ring with water inside
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bx = wx + dx, bz = wz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        const isEdge = Math.abs(dx) + Math.abs(dz) >= 1 && (Math.abs(dx) === 1 || Math.abs(dz) === 1);
+        if (dx === 0 && dz === 0) {
+          // Center: water column
+          blocks.push({ x: bx, y: wy, z: bz, type: 'water' });
+          blocks.push({ x: bx, y: wy + 1, z: bz, type: 'water' });
+        } else if (isEdge && !(Math.abs(dx) === 1 && Math.abs(dz) === 1)) {
+          // Cardinal edges: terracotta walls
+          blocks.push({ x: bx, y: wy + 1, z: bz, type: 'terracotta' });
+          blocks.push({ x: bx, y: wy + 2, z: bz, type: 'terracotta' });
+        }
+      }
+    }
+    // Corner pillars taller
+    for (const [cdx, cdz] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
+      const cx = wx + cdx, cz = wz + cdz;
+      if (cx >= 0 && cx < WORLD_SIZE && cz >= 0 && cz < WORLD_SIZE) {
+        blocks.push({ x: cx, y: wy + 1, z: cz, type: 'terracotta' });
+        blocks.push({ x: cx, y: wy + 2, z: cz, type: 'terracotta' });
+        blocks.push({ x: cx, y: wy + 3, z: cz, type: 'terracotta' });
+      }
+    }
+    // Roof slab at top connecting pillars
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bx = wx + dx, bz = wz + dz;
+        if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+          blocks.push({ x: bx, y: wy + 4, z: bz, type: 'terracotta' });
+        }
+      }
+    }
+    desertWellsPlaced++;
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 
