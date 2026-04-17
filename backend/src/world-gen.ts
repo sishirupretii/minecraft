@@ -980,6 +980,111 @@ export function generateWorld(seed = 1337): Block[] {
     }
   }
 
+  // 4.96 Generate shipwrecks near water (1-2 per world)
+  const shipCount = 1 + Math.floor(rng() * 2);
+  let shipAttempts = 0;
+  let placedShips = 0;
+  while (placedShips < shipCount && shipAttempts < 150) {
+    shipAttempts++;
+    const sx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const sz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const sh = heightMap[sx][sz];
+    // Must be near water level
+    if (sh > SEA_LEVEL + 2 || sh < SEA_LEVEL - 2) continue;
+    if (Math.abs(sx - half) < 30 && Math.abs(sz - half) < 30) continue;
+
+    // Build a small boat hull (8x4, tilted)
+    const shipLen = 6 + Math.floor(rng() * 3);
+    const shipDir = rng() > 0.5; // true = along X, false = along Z
+    for (let i = 0; i < shipLen; i++) {
+      const bx = shipDir ? sx + i : sx;
+      const bz = shipDir ? sz : sz + i;
+      if (bx >= WORLD_SIZE || bz >= WORLD_SIZE) break;
+
+      // Hull bottom
+      blocks.push({ x: bx, y: sh, z: bz, type: 'dark_oak_wood' });
+      // Sides (wider in middle)
+      const width = i === 0 || i === shipLen - 1 ? 0 : 1;
+      for (let w = -width; w <= width; w++) {
+        const wx = shipDir ? bx : bx + w;
+        const wz = shipDir ? bz + w : bz;
+        if (wx >= 0 && wx < WORLD_SIZE && wz >= 0 && wz < WORLD_SIZE) {
+          blocks.push({ x: wx, y: sh, z: wz, type: 'dark_oak_wood' });
+          // Walls on edges
+          if (Math.abs(w) === width && width > 0) {
+            blocks.push({ x: wx, y: sh + 1, z: wz, type: 'planks' });
+            // Random holes (wrecked)
+            if (rng() > 0.4) {
+              blocks.push({ x: wx, y: sh + 2, z: wz, type: 'planks' });
+            }
+          }
+        }
+      }
+    }
+    // Mast in the middle
+    const mx = shipDir ? sx + Math.floor(shipLen / 2) : sx;
+    const mz = shipDir ? sz : sz + Math.floor(shipLen / 2);
+    for (let my = 1; my <= 4; my++) {
+      blocks.push({ x: mx, y: sh + my, z: mz, type: 'fence' });
+    }
+    // Crow's nest
+    blocks.push({ x: mx, y: sh + 5, z: mz, type: 'planks' });
+    blocks.push({ x: mx + 1, y: sh + 5, z: mz, type: 'planks' });
+    blocks.push({ x: mx, y: sh + 5, z: mz + 1, type: 'planks' });
+    // Treasure chest
+    blocks.push({ x: mx, y: sh + 1, z: mz, type: 'chest' });
+    // Lantern on mast
+    blocks.push({ x: mx, y: sh + 4, z: mz, type: 'lantern' });
+    placedShips++;
+  }
+
+  // 4.97 Generate oasis pools in desert biome (small water + palm trees)
+  let oasisAttempts = 0;
+  let placedOasis = 0;
+  while (placedOasis < 2 && oasisAttempts < 100) {
+    oasisAttempts++;
+    const ox = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const oz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    if (biomeMap[ox][oz] !== 'desert') continue;
+    if (Math.abs(ox - half) < 30 && Math.abs(oz - half) < 30) continue;
+    const oh = heightMap[ox][oz];
+
+    // Small water pool (3x3)
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const wx = ox + dx, wz = oz + dz;
+        if (wx >= 0 && wx < WORLD_SIZE && wz >= 0 && wz < WORLD_SIZE) {
+          blocks.push({ x: wx, y: oh, z: wz, type: 'water' });
+          // Grass border
+          if (Math.abs(dx) + Math.abs(dz) > 1) {
+            blocks.push({ x: wx, y: oh, z: wz, type: 'base_blue' });
+          }
+        }
+      }
+    }
+    // Palm tree next to oasis
+    const px = ox + 2, pz = oz;
+    if (px < WORLD_SIZE) {
+      for (let ty = 1; ty <= 5; ty++) {
+        blocks.push({ x: px, y: oh + ty, z: pz, type: 'cyan_wood' });
+      }
+      // Leaf canopy
+      for (let ldx = -2; ldx <= 2; ldx++) {
+        for (let ldz = -2; ldz <= 2; ldz++) {
+          if (Math.abs(ldx) + Math.abs(ldz) > 3) continue;
+          const lx = px + ldx, lz = pz + ldz;
+          if (lx >= 0 && lx < WORLD_SIZE && lz >= 0 && lz < WORLD_SIZE) {
+            blocks.push({ x: lx, y: oh + 6, z: lz, type: 'leaves' });
+          }
+        }
+      }
+    }
+    // Sugar cane near water
+    blocks.push({ x: ox - 2, y: oh + 1, z: oz, type: 'sugar_cane' });
+    blocks.push({ x: ox, y: oh + 1, z: oz - 2, type: 'sugar_cane' });
+    placedOasis++;
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 

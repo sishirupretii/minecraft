@@ -3266,6 +3266,16 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setHunger(hungerInt);
       }
 
+      // ---- Hunger warnings ----
+      if (hungerInt === 4 && hungerRef.current !== 4) {
+        setToast('⚠️ You are getting hungry! Find food.');
+        setTimeout(() => setToast(null), 3000);
+      }
+      if (hungerInt === 1 && hungerRef.current !== 1) {
+        setToast('🚨 STARVING! Eat something now!');
+        setTimeout(() => setToast(null), 3000);
+      }
+
       // ---- Sprint particles (dust at feet) ----
       if (sprinting && Math.abs(player.velocity.y) < 0.5 && Math.floor(elapsed * 8) !== Math.floor((elapsed - dt) * 8)) {
         const px = camera.position.x + (Math.random() - 0.5) * 0.4;
@@ -4776,7 +4786,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
-            if (cmd === 'home') {
+            if (cmd === 'home' || cmd === 'spawn') {
               // /home — teleport to spawn point
               if (!walletAddress) {
                 appendChat({ username: 'system', message: '⛓️ Connect wallet to use /home', isSystem: true });
