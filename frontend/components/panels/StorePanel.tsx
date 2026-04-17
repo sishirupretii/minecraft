@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
 import { parseUnits, erc20Abi } from 'viem';
 import { base } from 'wagmi/chains';
 
@@ -118,7 +118,23 @@ export default function StorePanel({
   const [burnMode, setBurnMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<'shop' | 'burn' | 'tiers' | 'history'>('shop');
+  // If user doesn't have enough tokens, show "Buy token first" modal
+  const [showBuyTokenHelp, setShowBuyTokenHelp] = useState<{ needed: number; have: number; itemLabel: string } | null>(null);
   const { address: userAddress, chainId: userChainId } = useAccount();
+
+  // Live read user's $BASEDCRAFT balance to gate the BUY button
+  const tokenAddrForRead = (config?.tokenAddress ?? '0x53b83E4C2402DcF4Fe17755d51dd92d25c1a67c8') as `0x${string}`;
+  const { data: userTokenBalance, refetch: refetchBalance } = useReadContract({
+    address: tokenAddrForRead,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: userAddress ? [userAddress] : undefined,
+    chainId: base.id,
+    query: {
+      enabled: !!userAddress && visible,
+      refetchInterval: 10_000, // 10s
+    },
+  });
 
   const { writeContractAsync, isPending } = useWriteContract();
   const [pendingHash, setPendingHash] = useState<`0x${string}` | undefined>();
@@ -143,8 +159,10 @@ export default function StorePanel({
       setPendingHash(undefined);
       setBuyingId(null);
       setBurnMode(false);
+      // Refresh balance immediately (tx consumed tokens)
+      refetchBalance();
     }
-  }, [isConfirmed, pendingHash, buyingId, burnMode, onBuyStart, onBurnStart]);
+  }, [isConfirmed, pendingHash, buyingId, burnMode, onBuyStart, onBurnStart, refetchBalance]);
 
   // Clear error when a result arrives
   useEffect(() => {
@@ -155,36 +173,48 @@ export default function StorePanel({
 
   async function handleBuy(item: StoreItem) {
     setError(null);
-    if (!config) { setError('Store not loaded'); return; }
     if (!walletConnected || !userAddress) {
       setError('Connect your wallet to buy');
       return;
     }
-    if (userChainId !== config.chainId) {
-      setError(`Switch to Base (chain ${config.chainId}) in your wallet`);
+    // Fallback config: hardcoded token address + Base chain, so buys work even if
+    // server config is slow. Receiver MUST come from server (we never hardcode it).
+    const effectiveConfig = config ?? null;
+    if (!effectiveConfig || !effectiveConfig.receiverAddress) {
+      setError('Store config still loading — try again in 2 seconds');
       return;
+    }
+    if (userChainId !== (effectiveConfig.chainId || 8453)) {
+      setError(`Switch to Base mainnet (chain 8453) in your wallet`);
+      return;
+    }
+    // Check user has enough $BASEDCRAFT before even asking them to sign
+    if (userTokenBalance != null && effectiveConfig.tokenPriceUsd && effectiveConfig.tokenPriceUsd > 0) {
+      const needed = (item.price / effectiveConfig.tokenPriceUsd) * 1.05;
+      const haveTokens = Number(userTokenBalance) / 10 ** (effectiveConfig.tokenDecimals ?? 18);
+      if (haveTokens < needed) {
+        setShowBuyTokenHelp({ needed, have: haveTokens, itemLabel: item.label });
+        return;
+      }
     }
     try {
       setBuyingId(item.id);
       setBurnMode(false);
-      // Pay in $BASEDCRAFT — live-convert USD price → tokens using current market
-      const priceUsd = config.tokenPriceUsd ?? 0;
+      const priceUsd = effectiveConfig.tokenPriceUsd ?? 0;
       if (priceUsd <= 0) {
-        setError('Token price unavailable — try again in a few seconds');
+        setError('Fetching live token price… try again in 2 seconds');
         setBuyingId(null);
         return;
       }
-      const paymentAddress = config.paymentAddress ?? config.tokenAddress;
-      const paymentDecimals = config.paymentDecimals ?? config.tokenDecimals ?? 18;
-      // Pay 5% MORE than quote to comfortably survive price movement + 10% backend tolerance
+      const paymentAddress = effectiveConfig.paymentAddress ?? effectiveConfig.tokenAddress;
+      const paymentDecimals = effectiveConfig.paymentDecimals ?? effectiveConfig.tokenDecimals ?? 18;
       const tokensNeeded = (item.price / priceUsd) * 1.05;
-      // Convert to raw uint via parseUnits (avoids float precision loss)
       const amount = parseUnits(tokensNeeded.toFixed(6), paymentDecimals);
       const hash = await writeContractAsync({
         address: paymentAddress,
         abi: erc20Abi,
         functionName: 'transfer',
-        args: [config.receiverAddress, amount],
+        args: [effectiveConfig.receiverAddress, amount],
         chainId: base.id,
       });
       setPendingHash(hash);
@@ -289,6 +319,35 @@ export default function StorePanel({
             </span>
           )}
         </div>
+
+        {/* User token balance bar */}
+        {userAddress && config && (
+          <div
+            style={{
+              padding: '6px 10px',
+              background: 'rgba(0,0,0,0.4)',
+              border: '1px solid #333',
+              fontFamily: "'VT323', monospace", fontSize: '14px',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}
+          >
+            <span style={{ color: 'rgba(255,255,255,0.6)' }}>
+              Wallet: <span style={{ color: '#88aaff' }}>{userAddress.slice(0,6)}…{userAddress.slice(-4)}</span>
+            </span>
+            <span style={{ color: '#fff' }}>
+              Balance: <span style={{ color: '#ff9966', fontWeight: 'bold' }}>
+                {userTokenBalance != null
+                  ? formatTokens(Number(userTokenBalance) / 10 ** (config.tokenDecimals ?? 18))
+                  : '…'} ${config.paymentSymbol ?? 'BASEDCRAFT'}
+              </span>
+              {config.tokenPriceUsd && config.tokenPriceUsd > 0 && userTokenBalance != null && (
+                <span style={{ color: 'rgba(255,255,255,0.4)', marginLeft: '6px' }}>
+                  (≈ ${((Number(userTokenBalance) / 10 ** (config.tokenDecimals ?? 18)) * config.tokenPriceUsd).toFixed(2)})
+                </span>
+              )}
+            </span>
+          </div>
+        )}
 
         {/* Holder info banner */}
         {holderInfo && (
@@ -600,6 +659,100 @@ export default function StorePanel({
           ESC TO CLOSE · SECURE ON-CHAIN PAYMENTS · BASE MAINNET
         </div>
       </div>
+
+      {/* "You need to buy tokens first" modal */}
+      {showBuyTokenHelp && config && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.82)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowBuyTokenHelp(null); }}
+        >
+          <div
+            className="bc-panel"
+            style={{
+              maxWidth: '440px', width: '92%', padding: '22px',
+              border: '2px solid #ff9966',
+              background: 'linear-gradient(180deg, rgba(60,20,0,0.95), rgba(30,10,0,0.95))',
+            }}
+          >
+            <div style={{
+              fontFamily: "'Press Start 2P', monospace", fontSize: '12px',
+              color: '#ff9966', textShadow: '2px 2px 0 rgba(0,0,0,0.8)',
+              marginBottom: '12px',
+            }}>
+              ⚠ INSUFFICIENT $BASEDCRAFT
+            </div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '16px', color: '#fff', lineHeight: 1.4 }}>
+              You need <strong style={{ color: '#ff9966' }}>~{formatTokens(showBuyTokenHelp.needed)}</strong> $BASEDCRAFT
+              to buy <strong>{showBuyTokenHelp.itemLabel}</strong>.
+              <br /><br />
+              You have: <strong style={{ color: '#ffcc44' }}>{formatTokens(showBuyTokenHelp.have)}</strong> tokens.
+              <br /><br />
+              Grab some $BASEDCRAFT first — one of the links below:
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' }}>
+              <a
+                href={`https://app.uniswap.org/swap?chain=base&outputCurrency=${config.tokenAddress}`}
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  padding: '10px',
+                  background: '#ff007a', color: '#fff',
+                  fontFamily: "'Press Start 2P', monospace", fontSize: '9px',
+                  textAlign: 'center', textDecoration: 'none',
+                  border: '1px solid #ff3391',
+                }}
+              >
+                🦄 Swap on Uniswap (Base)
+              </a>
+              <a
+                href={`https://app.uniswap.org/swap?chain=base&outputCurrency=${config.tokenAddress}&inputCurrency=ETH`}
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  padding: '10px',
+                  background: '#0052ff', color: '#fff',
+                  fontFamily: "'Press Start 2P', monospace", fontSize: '9px',
+                  textAlign: 'center', textDecoration: 'none',
+                  border: '1px solid #3478f6',
+                }}
+              >
+                💎 Swap ETH → $BASEDCRAFT
+              </a>
+              {(config as any).tokenMarket?.pairUrl && (
+                <a
+                  href={(config as any).tokenMarket.pairUrl}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{
+                    padding: '10px',
+                    background: '#222', color: '#88aaff',
+                    fontFamily: "'Press Start 2P', monospace", fontSize: '9px',
+                    textAlign: 'center', textDecoration: 'none',
+                    border: '1px solid #444',
+                  }}
+                >
+                  📊 View on DexScreener
+                </a>
+              )}
+              <button
+                onClick={() => { setShowBuyTokenHelp(null); refetchBalance(); }}
+                style={{
+                  padding: '8px', marginTop: '4px',
+                  background: '#2a2a2a', color: '#aaa',
+                  fontFamily: "'Press Start 2P', monospace", fontSize: '8px',
+                  border: '1px solid #444', cursor: 'pointer',
+                }}
+              >
+                I'VE ALREADY BOUGHT — REFRESH BALANCE
+              </button>
+            </div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '10px', textAlign: 'center' }}>
+              Token: {config.tokenAddress.slice(0,10)}…{config.tokenAddress.slice(-6)}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

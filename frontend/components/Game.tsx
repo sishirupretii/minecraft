@@ -1844,12 +1844,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     // Request achievements on connect
     setTimeout(() => { socket.emit('achievement:list'); }, 2000);
-    setTimeout(() => {
+    // Request store config aggressively — immediately on connect, then retry at 1s/3s/6s
+    // in case socket wasn't connected yet. Idempotent on server.
+    const requestStoreConfig = () => {
       socket.emit('store:config');
       socket.emit('store:purchases');
       socket.emit('store:burns');
       socket.emit('store:holder_info');
-    }, 2500);
+    };
+    requestStoreConfig();
+    const storeConfigRetry1 = setTimeout(requestStoreConfig, 1000);
+    const storeConfigRetry2 = setTimeout(requestStoreConfig, 3000);
+    const storeConfigRetry3 = setTimeout(requestStoreConfig, 6000);
 
     const refreshInterval = setInterval(refreshOnlineList, 1000);
 
@@ -5037,6 +5043,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       cancelAnimationFrame(raf);
       clearInterval(refreshInterval);
       clearInterval(statsFlushInterval);
+      clearTimeout(storeConfigRetry1);
+      clearTimeout(storeConfigRetry2);
+      clearTimeout(storeConfigRetry3);
       clearInterval(achievementCheckInterval);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('keydown', onReenableShadows);

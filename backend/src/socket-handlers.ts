@@ -486,13 +486,22 @@ export function registerSocketHandlers(io: Server) {
 
     // ---- Store ----
     socket.on('store:config', async () => {
+      // Send config IMMEDIATELY (no network wait) — user can render UI right away
       const cfg = publicStoreConfig();
-      const market = await getTokenMarketData();
-      socket.emit('store:config', {
-        ...cfg,
-        tokenPriceUsd: market?.priceUsd ?? 0,
-        tokenMarket: market ?? null,
-      });
+      socket.emit('store:config', { ...cfg, tokenPriceUsd: 0 });
+      // Then fetch live price in background and push separately
+      getTokenMarketData()
+        .then((market) => {
+          if (market) socket.emit('store:price', {
+            tokenPriceUsd: market.priceUsd,
+            change24h: market.change24h,
+            liquidityUsd: market.liquidityUsd,
+            volume24hUsd: market.volume24hUsd,
+            pairUrl: market.pairUrl,
+            fetchedAt: market.fetchedAt,
+          });
+        })
+        .catch(() => {/* silent */});
     });
 
     socket.on('store:price', async () => {
