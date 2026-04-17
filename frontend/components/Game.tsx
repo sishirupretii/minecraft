@@ -2069,20 +2069,40 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           // Jukebox: play a random melody
           if (bt === 'jukebox') {
             const ctx = new AudioContext();
-            const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88];
-            for (let i = 0; i < 8; i++) {
+            // Play a procedural melody (one of 4 random tunes)
+            const melodies = [
+              [523, 587, 659, 698, 784, 698, 659, 587, 523, 440, 523, 659],  // C major scale up/down
+              [392, 440, 523, 440, 392, 330, 392, 440, 523, 659, 784, 659],  // playful melody
+              [330, 392, 440, 523, 440, 392, 330, 294, 330, 392, 440, 523],  // gentle ascent
+              [784, 659, 523, 440, 392, 440, 523, 659, 784, 880, 784, 659],  // dramatic
+            ];
+            const melody = melodies[Math.floor(Math.random() * melodies.length)];
+            for (let i = 0; i < melody.length; i++) {
               const osc = ctx.createOscillator();
-              osc.type = 'sine';
-              osc.frequency.value = notes[Math.floor(Math.random() * notes.length)];
+              osc.type = i % 2 === 0 ? 'sine' : 'triangle';
+              osc.frequency.value = melody[i];
               const gain = ctx.createGain();
-              gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.25);
-              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.25 + 0.2);
+              gain.gain.setValueAtTime(0.1, ctx.currentTime + i * 0.2);
+              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.2 + 0.18);
               osc.connect(gain).connect(ctx.destination);
-              osc.start(ctx.currentTime + i * 0.25);
-              osc.stop(ctx.currentTime + i * 0.25 + 0.25);
+              osc.start(ctx.currentTime + i * 0.2);
+              osc.stop(ctx.currentTime + i * 0.2 + 0.2);
+            }
+            // Note particles (music notes floating up)
+            for (let np = 0; np < 5; np++) {
+              const mat = new THREE.MeshStandardMaterial({ color: 0x44ff44, emissive: 0x22cc22, emissiveIntensity: 1, transparent: true, opacity: 0.8 });
+              const m = new THREE.Mesh(particleGeom, mat);
+              m.position.set(hit.x + 0.5 + (Math.random() - 0.5), hit.y + 1.5, hit.z + 0.5 + (Math.random() - 0.5));
+              m.castShadow = false; m.receiveShadow = false;
+              scene.add(m);
+              particles.push({
+                mesh: m,
+                velocity: new THREE.Vector3((Math.random() - 0.5) * 0.5, 1 + Math.random(), (Math.random() - 0.5) * 0.5),
+                age: 0, life: 1.5 + Math.random(),
+              });
             }
             setToast('🎶 Playing music...');
-            setTimeout(() => setToast(null), 2500);
+            setTimeout(() => setToast(null), 3000);
             return;
           }
           // Sign: right-click to read or set text
@@ -3045,6 +3065,35 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           if (beaconActive) setBeaconActive(false);
         }
       }
+      // Beacon beam particles: spawn glowing particles above nearby beacons
+      if (beaconActive && Math.floor(elapsed * 4) !== Math.floor((elapsed - dt) * 4)) {
+        const bpx = Math.floor(camera.position.x);
+        const bpy = Math.floor(camera.position.y);
+        const bpz = Math.floor(camera.position.z);
+        for (let dx = -16; dx <= 16; dx += 4) {
+          for (let dz = -16; dz <= 16; dz += 4) {
+            for (let dy = -8; dy <= 8; dy += 2) {
+              const bx = bpx + dx, by = bpy + dy, bz = bpz + dz;
+              if (world.getType(bx, by, bz) === 'beacon') {
+                const beamMat = new THREE.MeshStandardMaterial({
+                  color: 0x88ccff, emissive: 0x4488ff, emissiveIntensity: 2,
+                  transparent: true, opacity: 0.6,
+                });
+                const beamM = new THREE.Mesh(particleGeom, beamMat);
+                beamM.position.set(bx + 0.5, by + 2 + Math.random() * 10, bz + 0.5);
+                beamM.castShadow = false; beamM.receiveShadow = false;
+                scene.add(beamM);
+                particles.push({
+                  mesh: beamM,
+                  velocity: new THREE.Vector3(0, 3 + Math.random() * 2, 0),
+                  age: 0, life: 1.5,
+                });
+              }
+            }
+          }
+        }
+      }
+
       // Apply beacon regen
       if (beaconBuffsRef.current.regen > 0) {
         healthFloat = Math.min(MAX_HEALTH, healthFloat + beaconBuffsRef.current.regen * dt);
@@ -3532,6 +3581,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       } else if (!nowUnderwater && scene.fog instanceof THREE.Fog && scene.fog.far < 30) {
         scene.fog.near = 20;
         scene.fog.far = 90;
+      }
+
+      // Deep underground fog: darker and closer as player goes deeper
+      if (!nowUnderwater && camPos.y < 8 && scene.fog instanceof THREE.Fog) {
+        const depthFactor = Math.max(0, 1 - camPos.y / 8); // 0 at y=8, 1 at y=0
+        scene.fog.near = Math.max(3, 20 - depthFactor * 15);
+        scene.fog.far = Math.max(15, 90 - depthFactor * 60);
+        scene.fog.color.lerp(new THREE.Color(0x111111), depthFactor * 0.6);
       }
 
       // Biome detection: infer biome from surface block type
