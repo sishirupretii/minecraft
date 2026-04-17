@@ -1348,6 +1348,67 @@ export function generateWorld(seed = 1337): Block[] {
     blocks.push({ x: cx - 2, y: ch + 1, z: cz - 2, type: 'torch' });
   }
 
+  // 4.9985 Generate desert oases (water + palm trees in desert biomes)
+  const oasisCount = 1 + Math.floor(rng() * 2);
+  let oasisPlaced = 0;
+  for (let oi = 0; oi < 40 && oasisPlaced < oasisCount; oi++) {
+    const ox = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const oz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    if (Math.abs(ox - half) < 25 && Math.abs(oz - half) < 25) continue;
+    const oh = heightMap[ox][oz];
+    if (oh < SEA_LEVEL) continue;
+    // Check if in desert area (sand surface)
+    if (biomeMap[ox][oz] !== 'desert') continue;
+    // Create oasis pond (5-block radius water pool)
+    const oRadius = 3 + Math.floor(rng() * 2);
+    for (let odx = -oRadius; odx <= oRadius; odx++) {
+      for (let odz = -oRadius; odz <= oRadius; odz++) {
+        const dist = Math.sqrt(odx * odx + odz * odz);
+        if (dist <= oRadius) {
+          const px = ox + odx, pz = oz + odz;
+          if (px >= 0 && px < WORLD_SIZE && pz >= 0 && pz < WORLD_SIZE) {
+            blocks.push({ x: px, y: oh, z: pz, type: 'water' });
+            // Clay bottom
+            if (dist <= oRadius - 1) {
+              blocks.push({ x: px, y: oh - 1, z: pz, type: 'clay' });
+            }
+          }
+        }
+        // Ring of grass around the oasis
+        if (dist > oRadius && dist <= oRadius + 2) {
+          const px = ox + odx, pz = oz + odz;
+          if (px >= 0 && px < WORLD_SIZE && pz >= 0 && pz < WORLD_SIZE) {
+            blocks.push({ x: px, y: oh, z: pz, type: 'base_blue' });
+            // Random sugar cane / flowers
+            if (rng() < 0.3) {
+              blocks.push({ x: px, y: oh + 1, z: pz, type: 'sugar_cane' });
+            }
+          }
+        }
+      }
+    }
+    // Palm trees around oasis (cyan_wood trunk + leaves)
+    const palmSpots = [[-oRadius - 2, 0], [oRadius + 2, 0], [0, -oRadius - 2], [0, oRadius + 2]];
+    for (const [pdx, pdz] of palmSpots) {
+      const px = ox + pdx, pz = oz + pdz;
+      if (px < 0 || px >= WORLD_SIZE || pz < 0 || pz >= WORLD_SIZE) continue;
+      if (rng() < 0.7) {
+        const trunkH = 5 + Math.floor(rng() * 3);
+        for (let ty = 1; ty <= trunkH; ty++) {
+          blocks.push({ x: px, y: oh + ty, z: pz, type: 'cyan_wood' });
+        }
+        // Palm fronds (leaves in a cross pattern at top)
+        const topY = oh + trunkH + 1;
+        for (let fd = -2; fd <= 2; fd++) {
+          blocks.push({ x: px + fd, y: topY, z: pz, type: 'leaves' });
+          blocks.push({ x: px, y: topY, z: pz + fd, type: 'leaves' });
+        }
+        blocks.push({ x: px, y: topY + 1, z: pz, type: 'leaves' });
+      }
+    }
+    oasisPlaced++;
+  }
+
   // 4.999 Generate watchtowers (tall stone structures with loot at top)
   const watchtowerCount = 1 + Math.floor(rng() * 2);
   for (let wi = 0; wi < watchtowerCount; wi++) {

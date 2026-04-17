@@ -2375,7 +2375,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             // Trade offers based on what player holds
             const tradeSlot = inventoryRef.current[selectedRef.current];
             if (tradeSlot && tradeSlot.item === 'emerald' && tradeSlot.count >= 1) {
-              // Random trade: emerald → useful item
+              // Random trade: emerald → useful item (tier affects selection)
               const trades: Array<{ item: ItemType; count: number; label: string }> = [
                 { item: 'diamond', count: 1, label: '💎 Diamond' },
                 { item: 'iron_ingot', count: 4, label: '🔩 4 Iron Ingots' },
@@ -2385,6 +2385,21 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 { item: 'bread', count: 6, label: '🍞 6 Bread' },
                 { item: 'enchanted_book', count: 1, label: '📕 Enchanted Book' },
               ];
+              // Higher tiers get better trades
+              if (balanceTier === 'bronze' || balanceTier === 'silver' || balanceTier === 'gold' || balanceTier === 'diamond') {
+                trades.push({ item: 'ender_pearl', count: 2, label: '🌀 2 Ender Pearls' });
+                trades.push({ item: 'diamond', count: 2, label: '💎 2 Diamonds' });
+                trades.push({ item: 'cooked_beef', count: 8, label: '🥩 8 Steak' });
+              }
+              if (balanceTier === 'gold' || balanceTier === 'diamond') {
+                trades.push({ item: 'diamond', count: 3, label: '💎 3 Diamonds' });
+                trades.push({ item: 'golden_apple', count: 2, label: '🍎 2 Golden Apples' });
+                trades.push({ item: 'enchanted_book', count: 2, label: '📕 2 Enchanted Books' });
+              }
+              if (balanceTier === 'diamond') {
+                trades.push({ item: 'diamond', count: 5, label: '💎 5 Diamonds' });
+                trades.push({ item: 'beacon', count: 1, label: '🔷 Beacon' });
+              }
               const trade = trades[Math.floor(Math.random() * trades.length)];
               let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
               inv = addItem(inv, trade.item, trade.count);
@@ -4602,6 +4617,51 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       const newHp = Math.min(20, healthRef.current + 8);
       healthRef.current = newHp;
       setHealth(newHp);
+      // Level-up celebration particles (green + gold fireworks from camera)
+      const cam = cameraRef.current;
+      const sc = sceneRef.current;
+      if (cam && sc) {
+        const pGeom = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+        for (let i = 0; i < 20; i++) {
+          const color = i % 2 === 0 ? 0x55ff55 : 0xffdd00;
+          const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+          const m = new THREE.Mesh(pGeom, mat);
+          m.position.copy(cam.position);
+          m.castShadow = false;
+          sc.add(m);
+          const vel = new THREE.Vector3(
+            (Math.random() - 0.5) * 6,
+            2 + Math.random() * 4,
+            (Math.random() - 0.5) * 6,
+          );
+          // Auto-cleanup after 1.5 seconds
+          const startTime = Date.now();
+          const animate = () => {
+            const elapsed = (Date.now() - startTime) / 1000;
+            if (elapsed > 1.5) {
+              sc.remove(m);
+              mat.dispose();
+              pGeom.dispose();
+              return;
+            }
+            m.position.add(vel.clone().multiplyScalar(0.016));
+            vel.y -= 0.15;
+            mat.opacity = Math.max(0, 1 - elapsed / 1.5);
+            requestAnimationFrame(animate);
+          };
+          requestAnimationFrame(animate);
+        }
+      }
+      // Milestone level rewards (every 10 levels)
+      if (xpInfo.level % 10 === 0 && walletAddress) {
+        const milestoneRewards: ItemType[] = ['diamond', 'emerald', 'golden_apple', 'ender_pearl'];
+        const reward = milestoneRewards[Math.floor(Math.random() * milestoneRewards.length)];
+        const inv = addItem(inventoryRef.current, reward, 3);
+        inventoryRef.current = inv;
+        setInventory(inv);
+        setTimeout(() => setToast(`🎉 Level ${xpInfo.level} Milestone! +3 ${ITEMS[reward].label}!`), 3500);
+        setTimeout(() => setToast(null), 6500);
+      }
     }
     prevLevelRef.current = xpInfo.level;
   }, [xpInfo.level]);
