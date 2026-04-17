@@ -635,6 +635,151 @@ export function generateWorld(seed = 1337): Block[] {
     placedHuts.push({ x: hx, z: hz });
   }
 
+  // 4.6 Generate desert pyramids (1-2 in desert biomes)
+  const pyramidCount = 1 + Math.floor(rng() * 2);
+  let pyramidAttempts = 0;
+  const placedPyramids: Array<{ x: number; z: number }> = [];
+  while (placedPyramids.length < pyramidCount && pyramidAttempts < 200) {
+    pyramidAttempts++;
+    const px = 15 + Math.floor(rng() * (WORLD_SIZE - 30));
+    const pz = 15 + Math.floor(rng() * (WORLD_SIZE - 30));
+    if (biomeMap[px][pz] !== 'desert') continue;
+    // Check spacing from other pyramids
+    if (placedPyramids.some(p => Math.abs(p.x - px) < 25 && Math.abs(p.z - pz) < 25)) continue;
+
+    const baseY = heightMap[px][pz];
+    const pyramidSize = 7 + Math.floor(rng() * 4); // 7-10 base radius
+
+    // Build pyramid layer by layer
+    for (let layer = 0; layer <= pyramidSize; layer++) {
+      const radius = pyramidSize - layer;
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          const bx = px + dx;
+          const bz = pz + dz;
+          if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+          // Only edges for upper layers (hollow inside), solid base
+          if (layer > 0 && layer < pyramidSize && Math.abs(dx) < radius && Math.abs(dz) < radius) {
+            // Hollow interior — skip
+            continue;
+          }
+          blocks.push({ x: bx, y: baseY + layer, z: bz, type: 'terracotta' });
+        }
+      }
+    }
+
+    // Interior treasure room (ground level, centered)
+    const roomY = baseY + 1;
+    // Floor of treasure room
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        blocks.push({ x: px + dx, y: roomY, z: pz + dz, type: 'terracotta' });
+      }
+    }
+    // Chests with loot
+    blocks.push({ x: px, y: roomY + 1, z: pz, type: 'chest' });
+    blocks.push({ x: px + 1, y: roomY + 1, z: pz, type: 'chest' });
+    blocks.push({ x: px - 1, y: roomY + 1, z: pz, type: 'chest' });
+    // Torches
+    blocks.push({ x: px + 2, y: roomY + 2, z: pz + 2, type: 'torch' });
+    blocks.push({ x: px - 2, y: roomY + 2, z: pz - 2, type: 'torch' });
+    blocks.push({ x: px + 2, y: roomY + 2, z: pz - 2, type: 'torch' });
+    blocks.push({ x: px - 2, y: roomY + 2, z: pz + 2, type: 'torch' });
+    // Gold blocks as treasure
+    blocks.push({ x: px, y: roomY + 1, z: pz + 1, type: 'gold_block' });
+    blocks.push({ x: px, y: roomY + 1, z: pz - 1, type: 'gold_block' });
+    // TNT trap
+    blocks.push({ x: px + 2, y: roomY + 1, z: pz, type: 'tnt' });
+    blocks.push({ x: px - 2, y: roomY + 1, z: pz, type: 'tnt' });
+
+    placedPyramids.push({ x: px, z: pz });
+  }
+
+  // 4.7 Generate underground dungeons (small rooms with mob spawners and loot)
+  const dungeonCount = 3 + Math.floor(rng() * 3); // 3-5 dungeons
+  let dungeonAttempts = 0;
+  const placedDungeons: Array<{ x: number; y: number; z: number }> = [];
+  while (placedDungeons.length < dungeonCount && dungeonAttempts < 300) {
+    dungeonAttempts++;
+    const dx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const dz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const dy = 5 + Math.floor(rng() * 10); // between Y=5 and Y=15 (underground)
+    // Check it's actually underground
+    if (dy >= heightMap[dx][dz] - 3) continue;
+    // Spacing
+    if (placedDungeons.some(d => Math.abs(d.x - dx) < 15 && Math.abs(d.z - dz) < 15)) continue;
+
+    const roomW = 3 + Math.floor(rng() * 2); // 3-4 wide
+    const roomH = 3; // 3 tall
+    const roomD = 3 + Math.floor(rng() * 2); // 3-4 deep
+
+    // Carve room (remove blocks, place air)
+    for (let rx = -roomW; rx <= roomW; rx++) {
+      for (let ry = 0; ry < roomH; ry++) {
+        for (let rz = -roomD; rz <= roomD; rz++) {
+          const bx = dx + rx;
+          const bz = dz + rz;
+          if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+          // Walls and floor
+          if (Math.abs(rx) === roomW || Math.abs(rz) === roomD || ry === 0) {
+            blocks.push({ x: bx, y: dy + ry, z: bz, type: 'mossy_cobblestone' });
+          }
+          // Ceiling
+          if (ry === roomH - 1) {
+            blocks.push({ x: bx, y: dy + ry, z: bz, type: 'mossy_cobblestone' });
+          }
+        }
+      }
+    }
+
+    // Interior: chests, torches, spawner indicator
+    blocks.push({ x: dx, y: dy + 1, z: dz, type: 'chest' });
+    blocks.push({ x: dx + 1, y: dy + 1, z: dz, type: 'chest' });
+    // Torches on walls
+    blocks.push({ x: dx + roomW - 1, y: dy + 2, z: dz, type: 'torch' });
+    blocks.push({ x: dx - roomW + 1, y: dy + 2, z: dz, type: 'torch' });
+    // Vine decorations
+    blocks.push({ x: dx - 1, y: dy + 2, z: dz - 1, type: 'vine' });
+    blocks.push({ x: dx + 1, y: dy + 2, z: dz + 1, type: 'vine' });
+    // Fence as cage decoration
+    blocks.push({ x: dx, y: dy + 1, z: dz + roomD - 1, type: 'fence' });
+    blocks.push({ x: dx, y: dy + 2, z: dz + roomD - 1, type: 'fence' });
+
+    placedDungeons.push({ x: dx, y: dy, z: dz });
+  }
+
+  // 4.8 Generate ruined portals (obsidian frames partially broken, with loot)
+  const portalCount = 1 + Math.floor(rng() * 2);
+  let portalAttempts = 0;
+  while (portalAttempts < portalCount * 50) {
+    portalAttempts++;
+    const ppx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const ppz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const baseH = heightMap[ppx][ppz];
+    if (baseH < 3) continue;
+
+    // Build a 4x5 obsidian frame, with some blocks missing
+    const portalH = 5;
+    const portalW = 4;
+    for (let dy = 0; dy < portalH; dy++) {
+      for (let ddx = 0; ddx < portalW; ddx++) {
+        // Only frame edges
+        if (dy > 0 && dy < portalH - 1 && ddx > 0 && ddx < portalW - 1) continue;
+        // Random chance to skip (ruined effect)
+        if (rng() < 0.3) continue;
+        blocks.push({ x: ppx + ddx, y: baseH + dy, z: ppz, type: 'obsidian' });
+      }
+    }
+    // Loot chest nearby
+    blocks.push({ x: ppx + 2, y: baseH, z: ppz + 1, type: 'chest' });
+    // Gold block reward
+    blocks.push({ x: ppx + 1, y: baseH, z: ppz + 1, type: 'gold_block' });
+    // Nether bricks decoration
+    blocks.push({ x: ppx, y: baseH, z: ppz + 1, type: 'nether_bricks' });
+    blocks.push({ x: ppx + 3, y: baseH, z: ppz + 1, type: 'nether_bricks' });
+    break;
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 

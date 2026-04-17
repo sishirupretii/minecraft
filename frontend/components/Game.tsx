@@ -22,6 +22,7 @@ import {
   applyArmorReduction,
   countItem,
   removeItem,
+  INVENTORY_SIZE,
 } from '@/lib/items';
 import { RECIPES, Recipe, canCraft, craft } from '@/lib/recipes';
 import { getAudio } from '@/lib/audio';
@@ -198,6 +199,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
   // ---- Death screen ----
   const [isDead, setIsDead] = useState(false);
+  const [deathCause, setDeathCause] = useState<string>('Died');
 
   // ---- Chat ----
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
@@ -269,6 +271,39 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [miningComboDisplay, setMiningComboDisplay] = useState(0);
   // ---- Beacon active state ----
   const [beaconActive, setBeaconActive] = useState(false);
+  // ---- Creeper proximity warning ----
+  const [creeperNear, setCreeperNear] = useState(false);
+  const creeperNearRef = useRef(false);
+  // ---- Daily challenge (wallet-exclusive) ----
+  const [dailyChallenge, setDailyChallenge] = useState<{
+    type: string; target: number; current: number; reward: string; completed: boolean;
+    rewardItem?: ItemType; rewardCount?: number;
+  } | null>(null);
+
+  // Helper: advance daily challenge by 1 if type matches keywords
+  function advanceDailyChallenge(...keywords: string[]) {
+    setDailyChallenge(prev => {
+      if (!prev || prev.completed) return prev;
+      const lower = prev.type.toLowerCase();
+      if (!keywords.some(k => lower.includes(k))) return prev;
+      const next = { ...prev, current: prev.current + 1 };
+      if (next.current >= next.target) {
+        next.completed = true;
+        setToast(`🏆 Daily Challenge Complete! ${next.reward}`);
+        setTimeout(() => setToast(null), 3000);
+        // Deliver reward items
+        if (next.rewardItem && next.rewardCount) {
+          const newInv = addItem(inventoryRef.current, next.rewardItem, next.rewardCount);
+          inventoryRef.current = newInv;
+          setInventory(newInv);
+        }
+        // Save completion
+        const today = new Date().toISOString().split('T')[0];
+        try { window.localStorage.setItem(`bc_challenge_${today}`, JSON.stringify(next)); } catch {}
+      }
+      return next;
+    });
+  }
 
   function appendChat(msg: Omit<ChatMsg, 'id' | 'ts'> & { ts?: number }) {
     setChatMessages((prev) => {
@@ -303,6 +338,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     setInventory(next);
     statsRef.current.itemsCrafted++;
     getAudio().playBlockPlace('planks');
+    // Daily challenge progress: craft items
+    advanceDailyChallenge('craft');
   }, [balanceTier]);
 
   // Near crafting table? Check if any crafting_table block is within 4 blocks
@@ -588,6 +625,11 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const hemi = new THREE.HemisphereLight(0x9ec6f7, 0x5a4028, 0.5);
     scene.add(hemi);
 
+    // ---- Held torch/lantern point light ----
+    const holdLight = new THREE.PointLight(0xffaa44, 1.5, 15);
+    holdLight.visible = false;
+    scene.add(holdLight);
+
     // ---- Water ----
     const waterGeom = new THREE.PlaneGeometry(512, 512);
     const waterMat = new THREE.MeshStandardMaterial({ color: 0x2d7bd4, roughness: 0.2, metalness: 0.55, transparent: true, opacity: 0.72 });
@@ -741,6 +783,27 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
     }
 
+    // ---- Arrow projectiles (visual) ----
+    type ArrowProjectile = {
+      mesh: THREE.Mesh;
+      velocity: THREE.Vector3;
+      age: number;
+    };
+    const arrowProjectiles: ArrowProjectile[] = [];
+    const arrowGeom = new THREE.BoxGeometry(0.06, 0.06, 0.5);
+    const arrowMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
+    function spawnArrow(origin: THREE.Vector3, direction: THREE.Vector3) {
+      const mesh = new THREE.Mesh(arrowGeom, arrowMat.clone());
+      mesh.position.copy(origin);
+      mesh.lookAt(origin.clone().add(direction));
+      scene.add(mesh);
+      arrowProjectiles.push({
+        mesh,
+        velocity: direction.clone().multiplyScalar(30), // fast arrow
+        age: 0,
+      });
+    }
+
     // ---- Tier aura particles ----
     type AuraParticle = { mesh: THREE.Mesh; age: number; life: number; offset: THREE.Vector3; speed: number };
     const auraParticles: AuraParticle[] = [];
@@ -838,12 +901,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       const newHp = Math.max(0, hp - reducedDmg);
       healthRef.current = newHp;
       setHealth(newHp);
+      // Screen shake on fall damage (intensity scales with damage)
+      cameraShakeTimer = Math.min(0.5, reducedDmg * 0.08);
+      cameraShakeIntensity = Math.min(0.15, reducedDmg * 0.02);
+      audio.playBlockBreak('gravel'); // impact sound
+      setDeathCause('Fell from a high place');
     };
     // Void death: kill player if they fall into void
     player.onVoidDeath = () => {
       healthFloat = 0;
       healthRef.current = 0;
       setHealth(0);
+      setDeathCause('Fell out of the world');
     };
     // Drowning damage
     player.onDrown = (dmg) => {
@@ -851,6 +920,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       healthFloat = Math.max(0, healthFloat - reduced);
       healthRef.current = Math.round(healthFloat);
       setHealth(Math.round(healthFloat));
+      setDeathCause('Drowned');
     };
     // Lava damage (blocked by fire resistance potion)
     player.onLavaDamage = (dmg) => {
@@ -860,6 +930,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       healthRef.current = Math.round(healthFloat);
       setHealth(Math.round(healthFloat));
       hurtFlashTimer = 0.3;
+      setDeathCause('Tried to swim in lava');
     };
 
     // Tool-aware break speed: return the held item's ItemDef if it's a tool.
@@ -1090,6 +1161,30 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           });
         }
       }
+
+      // Generate daily challenge for wallet holders
+      if (walletAddress) {
+        const today = new Date().toISOString().slice(0, 10);
+        const challengeKey = `bc_challenge_${today}`;
+        if (!window.localStorage.getItem(challengeKey)) {
+          const challenges = [
+            { type: 'Mine 50 blocks', target: 50, reward: '10 Iron Ingots', rewardItem: 'iron_ingot' as ItemType, rewardCount: 10 },
+            { type: 'Kill 10 mobs', target: 10, reward: '5 Diamonds', rewardItem: 'diamond' as ItemType, rewardCount: 5 },
+            { type: 'Place 30 blocks', target: 30, reward: '20 Coal', rewardItem: 'coal' as ItemType, rewardCount: 20 },
+            { type: 'Walk 500 blocks', target: 500, reward: '3 Golden Apples', rewardItem: 'golden_apple' as ItemType, rewardCount: 3 },
+            { type: 'Craft 10 items', target: 10, reward: '8 Iron Ingots', rewardItem: 'iron_ingot' as ItemType, rewardCount: 8 },
+          ];
+          const seed = today.split('-').reduce((a, b) => a + parseInt(b), 0);
+          const challenge = challenges[seed % challenges.length];
+          setDailyChallenge({ ...challenge, current: 0, completed: false });
+          window.localStorage.setItem(challengeKey, JSON.stringify(challenge));
+        } else {
+          try {
+            const saved = JSON.parse(window.localStorage.getItem(challengeKey)!);
+            setDailyChallenge({ ...saved, current: 0, completed: false });
+          } catch {}
+        }
+      }
     };
 
     const onPlayerJoined = (p: { id: string; username: string; color: string; x: number; y: number; z: number }) => {
@@ -1282,6 +1377,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         if (t === 'diamond_ore') statsRef.current.diamondsFound++;
         if (t === 'copper_ore') statsRef.current.copperMined++;
         if (t === 'amethyst') statsRef.current.amethystMined++;
+        // Daily challenge progress: mine blocks
+        advanceDailyChallenge('mine', 'break');
         // Drop item (stone → cobblestone, grass → dirt, etc.)
         const drop = getBlockDrop(t);
         let nextInv = addItem(inventoryRef.current, drop, 1);
@@ -1322,6 +1419,34 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           // Spawn extra XP orbs for lucky find
           spawnXPOrbs(x, y, z, 3);
         }
+        // On-chain: Legendary item discovery (very rare, wallet-exclusive)
+        if (walletAddress && (t === 'diamond_ore' || t === 'emerald_ore' || t === 'amethyst') && Math.random() < 0.08) {
+          // Give an enchanted diamond tool with custom name
+          const legendaryNames = [
+            'Excalibur', 'Mjolnir', 'Dragonbane', 'Stormbreaker',
+            'Frostmourne', 'Ashbringer', 'Dawnbreaker', 'Soulreaver',
+          ];
+          const legendaryTools: ItemType[] = ['diamond_pickaxe', 'diamond_sword', 'diamond_axe'];
+          const chosenTool = legendaryTools[Math.floor(Math.random() * legendaryTools.length)];
+          const chosenName = legendaryNames[Math.floor(Math.random() * legendaryNames.length)];
+          nextInv = addItem(nextInv, chosenTool, 1);
+          // Enchant it
+          const enchSlot = nextInv.findIndex(s => s && s.item === chosenTool);
+          if (enchSlot >= 0) {
+            enchantedItemsRef.current.set(enchSlot, `${chosenName} ✧`);
+          }
+          spawnXPOrbs(x, y, z, 10);
+          cameraShakeTimer = 0.5;
+          cameraShakeIntensity = 0.05;
+          appendChat({
+            username: 'system',
+            message: `⚡ ${username} discovered a LEGENDARY ${chosenName}!`,
+            isSystem: true,
+          });
+          setToast(`⚡ LEGENDARY: ${chosenName}! (${ITEMS[chosenTool].label})`);
+          setTimeout(() => setToast(null), 4000);
+        }
+
         inventoryRef.current = nextInv;
         setInventory(nextInv);
         // Mining combo: consecutive blocks within 3s get bonus XP
@@ -1754,6 +1879,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setInventory(afterBow);
         if (broke) audio.playBlockBreak('royal_brick');
         audio.playJump(); // arrow swoosh
+        // Spawn visual arrow projectile
+        spawnArrow(camera.position.clone(), camDir.clone());
         handSwingTime = 0;
         return;
       }
@@ -2209,6 +2336,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       // Stats tracking
       statsRef.current.blocksPlaced++;
       if (type === 'beacon') statsRef.current.beaconsPlaced++;
+      // Daily challenge progress: place blocks
+      advanceDailyChallenge('place', 'build');
       audio.playBlockPlace(type);
       world.addBlock(x, y, z, type, true);
       socket.emit('block:place', { x, y, z, type });
@@ -2260,13 +2389,30 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             setInventory(inv);
             // XP for killing mob + stats + XP orbs (tier multiplied)
             statsRef.current.mobsKilled++;
+            // Daily challenge progress: kill mobs
+            advanceDailyChallenge('kill', 'slay');
+            // Kill streak tracking
+            killStreak++;
+            killStreakTimer = 8; // 8 second window for next kill
+            const streakBonus = killStreak >= 5 ? 3 : killStreak >= 3 ? 2 : 1;
             // Kill feed entry
+            const streakText = killStreak >= 3 ? ` (${killStreak}x streak!)` : '';
             setKillFeed(prev => {
-              const next = [...prev, { id: Date.now(), text: `⚔ Killed ${mobName}`, ts: Date.now() }];
+              const next = [...prev, { id: Date.now(), text: `⚔ Killed ${mobName}${streakText}`, ts: Date.now() }];
               if (next.length > 5) next.shift();
               return next;
             });
-            const mobXp = Math.round(5 * TIER_XP_MULTIPLIER[balanceTier]);
+            if (killStreak === 3) {
+              setToast('🔥 Triple Kill!');
+              setTimeout(() => setToast(null), 2000);
+            } else if (killStreak === 5) {
+              setToast('🔥🔥 Killing Spree!');
+              setTimeout(() => setToast(null), 2000);
+            } else if (killStreak === 10) {
+              setToast('💀 UNSTOPPABLE!');
+              setTimeout(() => setToast(null), 2500);
+            }
+            const mobXp = Math.round(5 * TIER_XP_MULTIPLIER[balanceTier] * streakBonus);
             const newXp = totalXpRef.current + mobXp;
             totalXpRef.current = newXp;
             setTotalXp(newXp);
@@ -2352,6 +2498,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     let lastPosZ = camera.position.z;
     let cameraShakeTimer = 0;
     let cameraShakeIntensity = 0;
+    // Kill streak tracking: consecutive kills within 8s
+    let killStreak = 0;
+    let killStreakTimer = 0;
     // Mining combo: consecutive blocks within 3s increase XP bonus
     let miningCombo = 0;
     let miningComboTimer = 0;
@@ -2373,6 +2522,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         if (miningComboTimer <= 0) {
           miningCombo = 0;
           setMiningComboDisplay(0);
+        }
+      }
+      // Kill streak timer
+      if (killStreakTimer > 0) {
+        killStreakTimer -= dt;
+        if (killStreakTimer <= 0) {
+          killStreak = 0;
         }
       }
       // Update combo display every few blocks
@@ -2438,6 +2594,24 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         }
       }
 
+      // Creeper proximity warning — flash green vignette when creeper is close
+      {
+        let creeperClose = false;
+        for (const mob of creepers.getMobs()) {
+          const dx = mob.group.position.x - camera.position.x;
+          const dz = mob.group.position.z - camera.position.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < 5 && mob.health > 0) {
+            creeperClose = true;
+            break;
+          }
+        }
+        if (creeperClose !== creeperNearRef.current) {
+          creeperNearRef.current = creeperClose;
+          setCreeperNear(creeperClose);
+        }
+      }
+
       // Enderman: check if player is looking at one
       {
         const lookDir = new THREE.Vector3();
@@ -2457,8 +2631,10 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
 
       // ---- Hostile mob attacks on player ----
-      const applyMobDamage = (rawDmg: number) => {
+      let lastDamageSource = 'Died';
+      const applyMobDamage = (rawDmg: number, source?: string) => {
         if (rawDmg <= 0) return;
+        if (source) lastDamageSource = source;
         // Shield blocking: halve damage if blocking
         let dmg = rawDmg;
         if (isBlockingRef.current) dmg = Math.floor(dmg * 0.5);
@@ -2472,13 +2648,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       };
 
       // Zombie melee
-      applyMobDamage(zombies.checkAttack(camera.position));
+      applyMobDamage(zombies.checkAttack(camera.position), 'Slain by Zombie');
       // Skeleton ranged
-      applyMobDamage(skeletons.checkRangedAttack(camera.position));
+      applyMobDamage(skeletons.checkRangedAttack(camera.position), 'Shot by Skeleton');
       // Creeper explosion
       const creeperResult = creepers.checkExplosion(camera.position, dt);
       if (creeperResult) {
-        applyMobDamage(creeperResult.damage);
+        applyMobDamage(creeperResult.damage, 'Blown up by Creeper');
         // Creeper explosion destroys nearby blocks (3×3×3 around detonation)
         const cx = Math.floor(creeperResult.pos.x);
         const cy = Math.floor(creeperResult.pos.y);
@@ -2504,19 +2680,19 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         }
       }
       // Spider melee
-      applyMobDamage(spiders.checkAttack(camera.position));
+      applyMobDamage(spiders.checkAttack(camera.position), 'Bitten by Spider');
       // Enderman melee
-      applyMobDamage(endermen.checkAttack(camera.position));
+      applyMobDamage(endermen.checkAttack(camera.position), 'Killed by Enderman');
       // Slime melee
-      applyMobDamage(slimes.checkAttack(camera.position));
+      applyMobDamage(slimes.checkAttack(camera.position), 'Squished by Slime');
       // Witch ranged potion attack
-      applyMobDamage(witches.checkRangedAttack(camera.position));
+      applyMobDamage(witches.checkRangedAttack(camera.position), 'Poisoned by Witch');
       // Blaze fireball attack
-      applyMobDamage(blazes.checkRangedAttack(camera.position));
+      applyMobDamage(blazes.checkRangedAttack(camera.position), 'Burned by Blaze');
       // Phantom dive attack
-      applyMobDamage(phantoms.checkDiveAttack(camera.position));
+      applyMobDamage(phantoms.checkDiveAttack(camera.position), 'Swooped by Phantom');
       // Ghast fireball attack
-      applyMobDamage(ghasts.checkRangedAttack(camera.position));
+      applyMobDamage(ghasts.checkRangedAttack(camera.position), 'Fireballed by Ghast');
 
       // Iron golem auto-attacks nearby hostile mobs
       for (const zmob of zombies.getMobs()) {
@@ -2537,7 +2713,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 const cdx = (px + ddx + 0.5) - camera.position.x;
                 const cdz = (pz + ddz + 0.5) - camera.position.z;
                 if (Math.abs(cdx) < 0.9 && Math.abs(cdz) < 0.9) {
-                  applyMobDamage(1); // 1 damage from cactus
+                  applyMobDamage(1, 'Pricked by cactus'); // 1 damage from cactus
                 }
               }
             }
@@ -2938,8 +3114,15 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       if (healthFloat <= 0) {
         statsRef.current.deaths++;
         statsRef.current.currentLifeSeconds = 0; // reset life timer
+        // Set death cause from last damage source
+        if (lastDamageSource !== 'Died') {
+          setDeathCause(lastDamageSource);
+        }
+        // Check for starvation death
+        if (hungerFloat <= 0) setDeathCause('Starved to death');
         setIsDead(true);
         player.inventoryOpen = true; // freeze movement
+        lastDamageSource = 'Died'; // reset for next death
       }
 
       // Track play time & exploration stats
@@ -3112,7 +3295,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 (lx - camera.position.x) ** 2 + (lz - camera.position.z) ** 2
               );
               if (ldist < 5) {
-                applyMobDamage(5); // lightning strike near player
+                applyMobDamage(5, 'Struck by lightning'); // lightning strike near player
               }
             }
           }
@@ -3126,6 +3309,26 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           ambient.intensity = 0.3;
           lightningFlashTimer = 0;
         }
+      }
+
+      // ---- Torch/lantern holding light boost ----
+      const lightSlot = inventoryRef.current[selectedRef.current];
+      if (lightSlot) {
+        const lightItem = lightSlot.item;
+        if (lightItem === 'torch' || lightItem === 'lantern' || lightItem === 'jack_o_lantern' || lightItem === 'glowstone' || lightItem === 'sea_lantern') {
+          // Boost ambient light when holding a light source
+          ambient.intensity = Math.max(ambient.intensity, 0.6);
+          // Point light follows player
+          holdLight.position.set(player.position.x, player.position.y + 1.5, player.position.z);
+          holdLight.visible = true;
+          holdLight.color.setHex(
+            lightItem === 'sea_lantern' ? 0x66ccff : lightItem === 'lantern' ? 0xffcc66 : 0xffaa44
+          );
+        } else {
+          holdLight.visible = false;
+        }
+      } else {
+        holdLight.visible = false;
       }
 
       // ---- Hand ----
@@ -3306,6 +3509,28 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         orb.mesh.scale.setScalar(scale);
         const orbMat = orb.mesh.material as THREE.MeshStandardMaterial;
         orbMat.opacity = Math.max(0, 1 - (orb.age / orb.life) * 0.5);
+      }
+
+      // ---- Arrow projectiles update ----
+      for (let i = arrowProjectiles.length - 1; i >= 0; i--) {
+        const arrow = arrowProjectiles[i];
+        arrow.age += dt;
+        // Gravity
+        arrow.velocity.y -= 15 * dt;
+        arrow.mesh.position.addScaledVector(arrow.velocity, dt);
+        // Orient arrow along velocity
+        const lookTarget = arrow.mesh.position.clone().add(arrow.velocity);
+        arrow.mesh.lookAt(lookTarget);
+        // Remove if too old or hit ground
+        const ax = Math.floor(arrow.mesh.position.x);
+        const ay = Math.floor(arrow.mesh.position.y);
+        const az = Math.floor(arrow.mesh.position.z);
+        const hitBlock = world.getType(ax, ay, az);
+        if (arrow.age > 3 || arrow.mesh.position.y < 0 || hitBlock) {
+          scene.remove(arrow.mesh);
+          (arrow.mesh.material as THREE.Material).dispose();
+          arrowProjectiles.splice(i, 1);
+        }
       }
 
       // ---- Tier aura particles ----
@@ -3595,6 +3820,21 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   // XP calculation
   const xpInfo = computeLevel(totalXp);
 
+  // Level-up detection and notification
+  const prevLevelRef = useRef(xpInfo.level);
+  useEffect(() => {
+    if (xpInfo.level > prevLevelRef.current && prevLevelRef.current > 0) {
+      setToast(`⬆️ Level Up! You are now level ${xpInfo.level}!`);
+      setTimeout(() => setToast(null), 3000);
+      getAudio().playBlockPlace('beacon');
+      // Bonus: heal 4 hearts on level up
+      const newHp = Math.min(20, healthRef.current + 8);
+      healthRef.current = newHp;
+      setHealth(newHp);
+    }
+    prevLevelRef.current = xpInfo.level;
+  }, [xpInfo.level]);
+
   return (
     <div
       className="relative h-screen w-screen overflow-hidden"
@@ -3785,6 +4025,17 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         />
       )}
 
+      {/* Creeper proximity warning — pulsing green vignette */}
+      {creeperNear && (
+        <div
+          className="pointer-events-none absolute inset-0 z-30 animate-pulse"
+          style={{
+            background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,180,0,0.2) 100%)',
+            animationDuration: '0.5s',
+          }}
+        />
+      )}
+
       {/* Cave darkening — subtle dark vignette when deep underground (Y < 12) */}
       {coords.y < 12 && !isUnderwater && (
         <div
@@ -3832,6 +4083,40 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 {k.text}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Daily challenge (wallet-exclusive) */}
+      {dailyChallenge && walletAddress && !dailyChallenge.completed && (
+        <div
+          className="pointer-events-none absolute z-20"
+          style={{
+            bottom: '85px',
+            right: '12px',
+            background: 'rgba(0,0,0,0.6)',
+            border: '1px solid rgba(255,200,0,0.4)',
+            padding: '6px 10px',
+          }}
+        >
+          <div style={{ fontFamily: "'Press Start 2P', monospace", fontSize: '7px', color: '#ffd700', marginBottom: '3px' }}>
+            DAILY CHALLENGE
+          </div>
+          <div style={{ fontFamily: "'VT323', monospace", fontSize: '14px', color: '#fff' }}>
+            {dailyChallenge.type}
+          </div>
+          <div style={{ fontFamily: "'VT323', monospace", fontSize: '12px', color: '#aaa' }}>
+            Progress: {Math.min(dailyChallenge.current, dailyChallenge.target)}/{dailyChallenge.target}
+          </div>
+          <div style={{ width: '100%', height: '3px', background: '#333', marginTop: '2px' }}>
+            <div style={{
+              width: `${Math.min(100, (dailyChallenge.current / dailyChallenge.target) * 100)}%`,
+              height: '100%',
+              background: '#ffd700',
+            }} />
+          </div>
+          <div style={{ fontFamily: "'VT323', monospace", fontSize: '11px', color: '#88ff44', marginTop: '2px' }}>
+            Reward: {dailyChallenge.reward}
           </div>
         </div>
       )}
@@ -3992,8 +4277,124 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'give') {
+              // /give <item> [count] — diamond tier only
+              if (balanceTier !== 'diamond') {
+                appendChat({ username: 'system', message: '💎 /give requires Diamond tier', isSystem: true });
+                return;
+              }
+              const itemName = parts[1]?.toLowerCase() as ItemType;
+              const count = parseInt(parts[2]) || 1;
+              if (!itemName || !ITEMS[itemName]) {
+                appendChat({ username: 'system', message: '❌ Usage: /give <item_id> [count]', isSystem: true });
+                return;
+              }
+              const giveInv = addItem(inventoryRef.current, itemName, Math.min(count, 64));
+              inventoryRef.current = giveInv;
+              setInventory(giveInv);
+              appendChat({ username: 'system', message: `✨ Gave ${count}x ${ITEMS[itemName].label}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'weather') {
+              // /weather <clear|rain|thunder> — gold tier+
+              if (balanceTier !== 'gold' && balanceTier !== 'diamond') {
+                appendChat({ username: 'system', message: '💰 /weather requires Gold+ tier', isSystem: true });
+                return;
+              }
+              const w = parts[1]?.toLowerCase();
+              if (w === 'clear' || w === 'rain' || w === 'thunder') {
+                weatherRef.current = w;
+                setWeatherType(w);
+                appendChat({ username: 'system', message: `🌤️ Weather set to ${w}`, isSystem: true });
+              } else {
+                appendChat({ username: 'system', message: '❌ Usage: /weather <clear|rain|thunder>', isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'kill') {
+              // /kill — suicide command
+              if (playerRef.current) {
+                setHealth(0);
+                healthRef.current = 0;
+                setIsDead(true);
+                statsRef.current.deaths++;
+                appendChat({ username: 'system', message: '💀 You killed yourself', isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'clear') {
+              // /clear — clear inventory (silver tier+)
+              if (balanceTier === 'none' || balanceTier === 'base' || balanceTier === 'bronze') {
+                appendChat({ username: 'system', message: '💰 /clear requires Silver+ tier', isSystem: true });
+                return;
+              }
+              const emptyInv = new Array(INVENTORY_SIZE).fill(null);
+              inventoryRef.current = emptyInv;
+              setInventory(emptyInv);
+              appendChat({ username: 'system', message: '🗑️ Inventory cleared', isSystem: true });
+              return;
+            }
+
+            if (cmd === 'xp') {
+              // /xp <amount> — add XP (diamond tier only)
+              if (balanceTier !== 'diamond') {
+                appendChat({ username: 'system', message: '💎 /xp requires Diamond tier', isSystem: true });
+                return;
+              }
+              const amount = parseInt(parts[1]);
+              if (isNaN(amount) || amount <= 0) {
+                appendChat({ username: 'system', message: '❌ Usage: /xp <amount>', isSystem: true });
+                return;
+              }
+              const newXp = totalXpRef.current + Math.min(amount, 10000);
+              totalXpRef.current = newXp;
+              setTotalXp(newXp);
+              appendChat({ username: 'system', message: `✨ Added ${Math.min(amount, 10000)} XP (total: ${newXp})`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'home') {
+              // /home — teleport to spawn point
+              if (!walletAddress) {
+                appendChat({ username: 'system', message: '⛓️ Connect wallet to use /home', isSystem: true });
+                return;
+              }
+              const sp = spawnPointRef.current;
+              if (sp) {
+                playerRef.current?.setPosition(sp.x, sp.y + 1, sp.z);
+                appendChat({ username: 'system', message: `🏠 Teleported home (${sp.x}, ${sp.y}, ${sp.z})`, isSystem: true });
+              } else {
+                playerRef.current?.setPosition(0, 80, 0);
+                appendChat({ username: 'system', message: '🏠 Teleported to world spawn', isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'pos' || cmd === 'position') {
+              const p = playerRef.current;
+              if (p) {
+                appendChat({ username: 'system', message: `📍 Position: ${p.position.x.toFixed(1)}, ${p.position.y.toFixed(1)}, ${p.position.z.toFixed(1)}`, isSystem: true });
+              }
+              return;
+            }
+
+            if (cmd === 'heal') {
+              // /heal — full heal (gold tier+)
+              if (balanceTier !== 'gold' && balanceTier !== 'diamond') {
+                appendChat({ username: 'system', message: '💰 /heal requires Gold+ tier', isSystem: true });
+                return;
+              }
+              setHealth(20);
+              healthRef.current = 20;
+              appendChat({ username: 'system', message: '❤️ Fully healed!', isSystem: true });
+              return;
+            }
+
             if (cmd === 'help') {
-              appendChat({ username: 'system', message: '📖 Commands: /tp x y z, /time, /seed, /stats, /tier, /help', isSystem: true });
+              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /help', isSystem: true });
               return;
             }
 
@@ -4070,6 +4471,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         keepSlots={TIER_KEEP_INVENTORY[balanceTier]}
         tierLabel={tierInfo.label}
         tierColor={tierInfo.color}
+        deathCause={deathCause}
       />
 
       {/* Achievement toast */}

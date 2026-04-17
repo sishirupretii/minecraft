@@ -207,6 +207,28 @@ export const RECIPES: Recipe[] = [
   // ---- Batch 19: More food recipes ----
   { id: 'cookie',       ingredients: [{ item: 'wheat_item', count: 2 }, { item: 'seeds', count: 1 }], result: { item: 'cookie', count: 8 } },
   { id: 'pumpkin_pie',  ingredients: [{ item: 'pumpkin', count: 1 }, { item: 'sugar', count: 1 }, { item: 'wheat_item', count: 1 }], result: { item: 'pumpkin_pie', count: 1 } },
+
+  // ---- Batch 28: More decorative & utility recipes ----
+  { id: 'mossy_cobble', ingredients: [{ item: 'cobblestone', count: 1 }, { item: 'vine', count: 1 }], result: { item: 'mossy_cobblestone', count: 1 } },
+  { id: 'gold_block',   ingredients: [{ item: 'gold_ingot', count: 9 }], result: { item: 'gold_block', count: 1 }, needsTable: true },
+  { id: 'gold_from_block', ingredients: [{ item: 'gold_block', count: 1 }], result: { item: 'gold_ingot', count: 9 } },
+  { id: 'sponge',       ingredients: [{ item: 'wool', count: 3 }, { item: 'string', count: 3 }], result: { item: 'sponge', count: 1 }, needsTable: true },
+  { id: 'soul_sand',    ingredients: [{ item: 'sand_blue', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'soul_sand', count: 2 }, needsFurnace: true },
+  { id: 'calcite',      ingredients: [{ item: 'cobblestone', count: 4 }, { item: 'bone', count: 1 }], result: { item: 'calcite', count: 4 }, needsTable: true },
+  { id: 'deepslate',    ingredients: [{ item: 'cobblestone', count: 4 }, { item: 'coal', count: 2 }], result: { item: 'deepslate', count: 4 }, needsFurnace: true },
+  { id: 'clay_ball',    ingredients: [{ item: 'mud', count: 1 }], result: { item: 'clay_ball', count: 4 } },
+  { id: 'glass_bottle', ingredients: [{ item: 'glass', count: 3 }], result: { item: 'glass_bottle', count: 3 } },
+  { id: 'glass_smelt',  ingredients: [{ item: 'sand_blue', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'glass', count: 1 }, needsFurnace: true },
+  { id: 'cooked_fish',  ingredients: [{ item: 'raw_fish', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'cooked_fish', count: 1 }, needsFurnace: true },
+  { id: 'golden_carrot', ingredients: [{ item: 'golden_apple', count: 1 }, { item: 'wheat_item', count: 2 }], result: { item: 'golden_apple', count: 2 } },
+  { id: 'campfire',     ingredients: [{ item: 'stick', count: 3 }, { item: 'coal', count: 1 }, { item: 'planks', count: 3 }], result: { item: 'campfire', count: 1 } },
+  { id: 'lily_pad',     ingredients: [{ item: 'vine', count: 2 }, { item: 'seeds', count: 1 }], result: { item: 'lily_pad', count: 2 } },
+  { id: 'noteblock',    ingredients: [{ item: 'planks', count: 8 }, { item: 'iron_ingot', count: 1 }], result: { item: 'noteblock', count: 1 }, needsTable: true },
+  { id: 'jukebox',      ingredients: [{ item: 'planks', count: 8 }, { item: 'diamond', count: 1 }], result: { item: 'jukebox', count: 1 }, needsTable: true },
+  { id: 'bed_craft',    ingredients: [{ item: 'wool', count: 3 }, { item: 'planks', count: 3 }], result: { item: 'bed', count: 1 } },
+  { id: 'tnt_craft',    ingredients: [{ item: 'gunpowder', count: 5 }, { item: 'sand_blue', count: 4 }], result: { item: 'tnt', count: 1 }, needsTable: true },
+  { id: 'oak_door',     ingredients: [{ item: 'planks', count: 6 }], result: { item: 'oak_door', count: 3 }, needsTable: true },
+  { id: 'trapdoor',     ingredients: [{ item: 'planks', count: 3 }], result: { item: 'trapdoor', count: 2 } },
 ];
 
 /** Check if the player has enough materials to craft a recipe. */

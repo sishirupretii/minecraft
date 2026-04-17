@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   ITEMS,
   ItemType,
@@ -11,6 +11,76 @@ import {
   swapSlots,
 } from '@/lib/items';
 import { RECIPES, Recipe, canCraft } from '@/lib/recipes';
+
+// Tooltip component for inventory items
+function ItemTooltip({ slot, x, y }: { slot: InventorySlot; x: number; y: number }) {
+  const def = ITEMS[slot.item];
+  if (!def) return null;
+
+  return (
+    <div
+      className="pointer-events-none fixed z-[100]"
+      style={{
+        left: `${x + 12}px`,
+        top: `${y - 8}px`,
+        background: 'rgba(16,0,32,0.92)',
+        border: '2px solid #555',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.6), inset 0 0 12px rgba(80,0,160,0.1)',
+        padding: '6px 10px',
+        minWidth: '140px',
+        maxWidth: '220px',
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '16px',
+          color: def.isTool ? '#55ffff' : def.isArmor ? '#55ff55' : def.isFood ? '#ffaa55' : '#fff',
+          textShadow: '1px 1px 0 #000',
+          marginBottom: '2px',
+        }}
+      >
+        {def.label}
+      </div>
+      {def.isTool && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#aaa' }}>
+          {def.toolKind && <span>Type: {def.toolKind} </span>}
+          {def.toolTier && <span style={{ color: '#ffcc44' }}>({def.toolTier})</span>}
+        </div>
+      )}
+      {def.attackDamage && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#ff6666' }}>
+          ⚔ Attack: {def.attackDamage}
+        </div>
+      )}
+      {def.durability && slot.durability !== undefined && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: slot.durability / def.durability > 0.5 ? '#55ff55' : slot.durability / def.durability > 0.25 ? '#ffcc44' : '#ff4444' }}>
+          🔧 Durability: {slot.durability}/{def.durability}
+        </div>
+      )}
+      {def.isArmor && def.armorDefense && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#55aaff' }}>
+          🛡 Armor: +{def.armorDefense}
+        </div>
+      )}
+      {def.isFood && def.foodRestore && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#ffaa55' }}>
+          🍖 Restores: {def.foodRestore} hunger
+        </div>
+      )}
+      {def.isBlock && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#888' }}>
+          Right-click to place
+        </div>
+      )}
+      {slot.count > 1 && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '12px', color: '#666', marginTop: '2px' }}>
+          Stack: {slot.count}/{def.stackSize}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Props {
   inventory: Inventory;
@@ -27,16 +97,23 @@ function Slot({
   index,
   selected,
   onClick,
+  onHover,
+  onLeave,
 }: {
   slot: InventorySlot | null;
   index: number;
   selected: boolean;
   onClick: () => void;
+  onHover?: (e: React.MouseEvent) => void;
+  onLeave?: () => void;
 }) {
   const def = slot ? ITEMS[slot.item] : null;
   return (
     <button
       onClick={onClick}
+      onMouseEnter={onHover}
+      onMouseMove={onHover}
+      onMouseLeave={onLeave}
       className="relative flex items-center justify-center"
       style={{
         width: '42px',
@@ -135,6 +212,17 @@ export default function InventoryScreen({
   onClose,
 }: Props) {
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+  const [hoveredSlot, setHoveredSlot] = useState<{ slot: InventorySlot; x: number; y: number } | null>(null);
+  const [craftFilter, setCraftFilter] = useState('');
+  const [showCraftable, setShowCraftable] = useState(false);
+
+  const handleSlotHover = useCallback((slot: InventorySlot | null, e: React.MouseEvent) => {
+    if (slot) {
+      setHoveredSlot({ slot, x: e.clientX, y: e.clientY });
+    } else {
+      setHoveredSlot(null);
+    }
+  }, []);
 
   // Filter recipes: show all, but gray out ones that can't be crafted
   const recipeStates = useMemo(() => {
@@ -261,6 +349,8 @@ export default function InventoryScreen({
                       index={idx}
                       selected={selectedSlot === idx}
                       onClick={() => handleSlotClick(idx)}
+                      onHover={(e) => handleSlotHover(main[row * 9 + col] ?? null, e)}
+                      onLeave={() => setHoveredSlot(null)}
                     />
                   );
                 })}
@@ -280,6 +370,8 @@ export default function InventoryScreen({
                 index={i}
                 selected={selectedSlot === i}
                 onClick={() => handleSlotClick(i)}
+                onHover={(e) => handleSlotHover(slot, e)}
+                onLeave={() => setHoveredSlot(null)}
               />
             ))}
           </div>
@@ -287,23 +379,68 @@ export default function InventoryScreen({
 
         {/* Right: Crafting recipes */}
         <div className="flex flex-col gap-2" style={{ minWidth: '220px' }}>
-          <div
-            style={{
-              fontFamily: "'Press Start 2P', monospace",
-              fontSize: '10px',
-              color: 'rgba(255,255,255,0.7)',
-              textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
-              marginBottom: '4px',
-            }}
-          >
-            CRAFTING
+          <div className="flex items-center justify-between" style={{ marginBottom: '4px' }}>
+            <span
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '10px',
+                color: 'rgba(255,255,255,0.7)',
+                textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
+              }}
+            >
+              CRAFTING
+            </span>
+            <button
+              onClick={() => setShowCraftable(!showCraftable)}
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '7px',
+                color: showCraftable ? '#5cb85c' : '#aaa',
+                background: 'rgba(0,0,0,0.4)',
+                border: showCraftable ? '1px solid #5cb85c' : '1px solid #555',
+                padding: '2px 6px',
+                cursor: 'pointer',
+              }}
+            >
+              {showCraftable ? 'ALL' : 'CAN'}
+            </button>
           </div>
+
+          {/* Search filter */}
+          <input
+            type="text"
+            placeholder="Search..."
+            value={craftFilter}
+            onChange={(e) => setCraftFilter(e.target.value)}
+            style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '14px',
+              color: '#fff',
+              background: 'rgba(0,0,0,0.5)',
+              border: '1px solid #555',
+              padding: '3px 6px',
+              marginBottom: '4px',
+              width: '100%',
+              outline: 'none',
+            }}
+          />
 
           <div
             className="flex flex-col gap-1 overflow-y-auto pr-1"
-            style={{ maxHeight: '320px' }}
+            style={{ maxHeight: '280px' }}
           >
-            {recipeStates.map(({ recipe, craftable, hasIngredients, needsTableButFar, needsFurnaceButFar }) => {
+            {recipeStates
+              .filter(({ recipe, craftable }) => {
+                // Filter by craftable toggle
+                if (showCraftable && !craftable) return false;
+                // Filter by search text
+                if (craftFilter) {
+                  const resultDef = ITEMS[recipe.result.item];
+                  return resultDef.label.toLowerCase().includes(craftFilter.toLowerCase());
+                }
+                return true;
+              })
+              .map(({ recipe, craftable, hasIngredients, needsTableButFar, needsFurnaceButFar }) => {
               const resultDef = ITEMS[recipe.result.item];
               return (
                 <button
@@ -400,6 +537,11 @@ export default function InventoryScreen({
       >
         PRESS E OR ESC TO CLOSE
       </div>
+
+      {/* Item tooltip on hover */}
+      {hoveredSlot && (
+        <ItemTooltip slot={hoveredSlot.slot} x={hoveredSlot.x} y={hoveredSlot.y} />
+      )}
     </div>
   );
 }
