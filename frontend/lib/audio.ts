@@ -417,6 +417,103 @@ export class AudioEngine {
     return buffer;
   }
 
+  /** Play a cave drip sound — water droplet */
+  playCaveDrip() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(800 + Math.random() * 400, now);
+    osc.frequency.exponentialRampToValueAtTime(200 + Math.random() * 100, now + 0.15);
+    gain.gain.setValueAtTime(0.04 + Math.random() * 0.03, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  }
+
+  /** Play a bird chirp — short tonal pip */
+  playBirdChirp() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const chirpCount = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < chirpCount; i++) {
+      const t = now + i * 0.12;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const baseFreq = 1200 + Math.random() * 1600;
+      osc.frequency.setValueAtTime(baseFreq, t);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * (0.8 + Math.random() * 0.4), t + 0.08);
+      gain.gain.setValueAtTime(0.02, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(t);
+      osc.stop(t + 0.12);
+    }
+  }
+
+  /** Play a wind gust sound */
+  playWindGust() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const buf = this.makeNoiseBuffer(1.5, true);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(300, now);
+    filter.frequency.linearRampToValueAtTime(600, now + 0.5);
+    filter.frequency.linearRampToValueAtTime(200, now + 1.5);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.3);
+    gain.gain.linearRampToValueAtTime(0, now + 1.5);
+    src.connect(filter).connect(gain).connect(this.masterGain!);
+    src.start(now);
+    src.stop(now + 1.5);
+  }
+
+  /** Play XP orb pickup sound */
+  playXPPickup() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+    gain.gain.setValueAtTime(0.05, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
+  /** Play level-up fanfare */
+  playLevelUp() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + i * 0.12);
+      gain.gain.setValueAtTime(0.06, now + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.3);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.12);
+      osc.stop(now + i * 0.12 + 0.3);
+    });
+  }
+
   dispose() {
     if (this.musicInterval) {
       clearInterval(this.musicInterval);

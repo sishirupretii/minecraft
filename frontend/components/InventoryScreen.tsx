@@ -9,6 +9,8 @@ import {
   HOTBAR_SIZE,
   INVENTORY_SIZE,
   swapSlots,
+  ArmorSlots,
+  getArmorDefense,
 } from '@/lib/items';
 import { RECIPES, Recipe, canCraft } from '@/lib/recipes';
 
@@ -89,6 +91,7 @@ interface Props {
   nearCraftingTable: boolean; // player is within 3 blocks of a crafting_table
   nearFurnace?: boolean;      // player is within 4 blocks of a furnace
   onClose: () => void;
+  armor?: ArmorSlots;
 }
 
 // Renders one slot (shared between inventory grid and hotbar row)
@@ -210,6 +213,7 @@ export default function InventoryScreen({
   nearCraftingTable,
   nearFurnace = false,
   onClose,
+  armor,
 }: Props) {
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [hoveredSlot, setHoveredSlot] = useState<{ slot: InventorySlot; x: number; y: number } | null>(null);
@@ -376,6 +380,61 @@ export default function InventoryScreen({
             ))}
           </div>
         </div>
+
+        {/* Middle: Armor slots */}
+        {armor && (
+          <div className="flex flex-col gap-2 items-center" style={{ minWidth: '52px' }}>
+            <span
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '8px',
+                color: 'rgba(255,255,255,0.5)',
+                textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
+                marginBottom: '2px',
+              }}
+            >
+              ARMOR
+            </span>
+            {(['helmet', 'chestplate', 'leggings', 'boots'] as const).map((slotName) => {
+              const armorSlot = armor[slotName];
+              const labels: Record<string, string> = { helmet: '🪖', chestplate: '🛡', leggings: '👖', boots: '👢' };
+              return (
+                <div key={slotName} className="relative flex items-center justify-center" style={{
+                  width: '42px', height: '42px',
+                  background: armorSlot ? 'rgba(60,120,200,0.2)' : 'rgba(0,0,0,0.4)',
+                  border: armorSlot ? '2px solid #4488cc' : '2px solid #444',
+                  boxShadow: 'inset 1px 1px 0 #333, inset -1px -1px 0 #111',
+                }}>
+                  {armorSlot ? (
+                    <>
+                      <div style={{
+                        width: '24px', height: '24px',
+                        background: ITEMS[armorSlot.item]?.color ?? '#888',
+                        boxShadow: 'inset 0 -3px 0 rgba(0,0,0,0.25)',
+                      }} />
+                      <span className="absolute" style={{
+                        bottom: '1px', right: '2px',
+                        fontFamily: "'VT323', monospace", fontSize: '10px',
+                        color: '#aaf', textShadow: '1px 1px 0 #000',
+                      }}>
+                        +{ITEMS[armorSlot.item]?.armorDefense ?? 0}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: '16px', opacity: 0.3 }}>{labels[slotName]}</span>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{
+              fontFamily: "'VT323', monospace", fontSize: '13px',
+              color: '#88aaff', textShadow: '1px 1px 0 #000',
+              marginTop: '4px',
+            }}>
+              🛡 {getArmorDefense(armor)}
+            </div>
+          </div>
+        )}
 
         {/* Right: Crafting recipes */}
         <div className="flex flex-col gap-2" style={{ minWidth: '220px' }}>

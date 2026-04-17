@@ -28,7 +28,7 @@ const TIER_PERKS: TierPerk[] = [
     miningSpeed: '1.05x',
     speedBonus: '—',
     exclusiveBlocks: ['Base Block'],
-    extras: ['Wallet Rewards (5min)', 'Starter Kit', 'Land Claims', 'Keep 3 slots on death', '4% Lucky Mining'],
+    extras: ['Wallet Rewards (5min)', 'Starter Kit', 'Land Claims', 'Keep 3 slots on death', '4% Lucky Mining', '3% Damage Reduction', '4s Respawn Protection', '10% Bonus Mob Drops'],
   },
   {
     tier: 'Bronze',
@@ -41,7 +41,7 @@ const TIER_PERKS: TierPerk[] = [
     miningSpeed: '1.15x',
     speedBonus: '+2%',
     exclusiveBlocks: ['Base Block', 'Bronze Block', 'Beacon'],
-    extras: ['Better Starter Kit', 'Name Glow', 'Keep 5 slots on death', '6% Lucky Mining'],
+    extras: ['Better Starter Kit', 'Name Glow', 'Keep 5 slots on death', '6% Lucky Mining', '6% Damage Reduction', '5s Respawn Protection', '15% Bonus Mob Drops'],
   },
   {
     tier: 'Silver',
@@ -54,7 +54,7 @@ const TIER_PERKS: TierPerk[] = [
     miningSpeed: '1.3x',
     speedBonus: '+5%',
     exclusiveBlocks: ['Silver Block', 'Nether Portal'],
-    extras: ['◆ Name Prefix', 'Chat Color', 'Keep full hotbar on death', '8% Lucky Mining', '10% less hunger'],
+    extras: ['◆ Name Prefix', 'Chat Color', 'Keep full hotbar on death', '8% Lucky Mining', '10% less hunger', '10% Damage Reduction', '6s Respawn Protection', '20% Bonus Mob Drops'],
   },
   {
     tier: 'Gold',
@@ -67,7 +67,7 @@ const TIER_PERKS: TierPerk[] = [
     miningSpeed: '1.5x',
     speedBonus: '+8%',
     exclusiveBlocks: ['Gold Block'],
-    extras: ['★ Name Prefix', 'Particles', 'Keep 18 slots on death', '12% Lucky Mining', '25% less hunger'],
+    extras: ['★ Name Prefix', 'Particles', 'Keep 18 slots on death', '12% Lucky Mining', '25% less hunger', '15% Damage Reduction', '8s Respawn Protection', '30% Bonus Mob Drops', '/heal & /weather commands'],
   },
   {
     tier: 'Diamond',
@@ -80,7 +80,7 @@ const TIER_PERKS: TierPerk[] = [
     miningSpeed: '2.0x',
     speedBonus: '+12%',
     exclusiveBlocks: ['Crystal Block', 'Nether Star'],
-    extras: ['✦ Name Prefix', 'Full Particles', 'Keep ALL items on death', '18% Lucky Mining', 'Auto-repair tools'],
+    extras: ['✦ Name Prefix', 'Full Particles', 'Keep ALL items on death', '18% Lucky Mining', 'Auto-repair tools', '20% Damage Reduction', '10s Respawn Protection', '40% Bonus Mob Drops', '/give & /xp commands'],
   },
 ];
 

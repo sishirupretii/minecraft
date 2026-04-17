@@ -46,6 +46,9 @@ import {
   TIER_KEEP_INVENTORY,
   TIER_LUCKY_MINING,
   CAMPFIRE_COOK_INTERVAL,
+  TIER_DAMAGE_REDUCTION,
+  TIER_RESPAWN_PROTECTION,
+  TIER_MOB_DROP_BONUS,
 } from '@/lib/chain/constants';
 import {
   ACHIEVEMENT_DEFS,
@@ -226,6 +229,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [toast, setToast] = useState<string | null>(null);
   const [killFeed, setKillFeed] = useState<Array<{ id: number; text: string; ts: number }>>([]);
   const [invulnerable, setInvulnerable] = useState(false);
+  const invulnerableRef = useRef(false);
 
   // ---- Weather system ----
   const [weatherType, setWeatherType] = useState<'clear' | 'rain' | 'thunder'>('clear');
@@ -982,7 +986,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       setSelfColor(payload.you.color);
       player.setPosition(payload.spawnPoint.x, payload.spawnPoint.y, payload.spawnPoint.z);
       setInvulnerable(true);
-      setTimeout(() => setInvulnerable(false), 5000);
+      invulnerableRef.current = true;
+      setTimeout(() => { setInvulnerable(false); invulnerableRef.current = false; }, 5000);
     };
 
     const onWorldChunk = (payload: { blocks: Array<{ x: number; y: number; z: number; type: BlockType }> }) => {
@@ -2426,6 +2431,16 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               setInventory(bInv);
               statsRef.current.emeraldsEarned += bounty;
             }
+            // Tier-based bonus mob drops (extra random loot)
+            const bonusChance = TIER_MOB_DROP_BONUS[balanceTier];
+            if (bonusChance > 0 && Math.random() < bonusChance) {
+              const bonusDrops: ItemType[] = ['bone', 'string', 'iron_ingot', 'gold_ingot', 'diamond', 'emerald', 'ender_pearl'];
+              const bonusDrop = bonusDrops[Math.floor(Math.random() * bonusDrops.length)];
+              let bInv2 = inventoryRef.current;
+              bInv2 = addItem(bInv2, bonusDrop, 1);
+              inventoryRef.current = bInv2;
+              setInventory(bInv2);
+            }
           }
           // Decrement tool durability
           if (slot && def?.isTool && def.durability) {
@@ -2620,7 +2635,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
 
       // Tamed wolves attack hostile mobs near them
-      for (const hostileMgr of [zombies, skeletons, spiders]) {
+      for (const hostileMgr of [zombies, skeletons, spiders, slimes]) {
         for (const mob of hostileMgr.getMobs()) {
           if (mob.dead) continue;
           const wolfDmg = wolves.attackTarget(mob.group.position);
@@ -2634,12 +2649,15 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       let lastDamageSource = 'Died';
       const applyMobDamage = (rawDmg: number, source?: string) => {
         if (rawDmg <= 0) return;
+        if (invulnerableRef.current) return; // spawn protection
         if (source) lastDamageSource = source;
         // Shield blocking: halve damage if blocking
         let dmg = rawDmg;
         if (isBlockingRef.current) dmg = Math.floor(dmg * 0.5);
         // Armor reduction
         dmg = applyArmorReduction(dmg, armorRef.current);
+        // Tier damage reduction (on-chain perk)
+        dmg = Math.max(1, Math.round(dmg * (1 - TIER_DAMAGE_REDUCTION[balanceTier])));
         healthFloat = Math.max(0, healthFloat - dmg);
         healthRef.current = Math.round(healthFloat);
         setHealth(Math.round(healthFloat));
@@ -2694,11 +2712,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       // Ghast fireball attack
       applyMobDamage(ghasts.checkRangedAttack(camera.position), 'Fireballed by Ghast');
 
-      // Iron golem auto-attacks nearby hostile mobs
-      for (const zmob of zombies.getMobs()) {
-        if (zmob.dead) continue;
-        const golemDmg = ironGolems.attackHostileNear(zmob.group.position);
-        if (golemDmg > 0) zombies.dealDamage(zmob, golemDmg);
+      // Iron golem auto-attacks nearby hostile mobs (all hostile types)
+      const golemTargetMgrs = [zombies, skeletons, spiders, creepers, slimes, witches] as const;
+      for (const mgr of golemTargetMgrs) {
+        for (const mob of mgr.getMobs()) {
+          if (mob.dead) continue;
+          const golemDmg = ironGolems.attackHostileNear(mob.group.position);
+          if (golemDmg > 0) mgr.dealDamage(mob, golemDmg);
+        }
       }
 
       // ---- Cactus contact damage (check every ~0.5s) ----
@@ -3013,6 +3034,23 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setHasCompass(has);
       }
 
+      // ---- Ambient sounds ----
+      // Cave drips when underground (random, ~every 3-8 seconds)
+      if (camera.position.y < 15 && Math.random() < dt * 0.2) {
+        audio.playCaveDrip();
+      }
+      // Bird chirps during daytime in forests/plains (random, ~every 5-10 seconds)
+      if (!isNight && camera.position.y > 20 && Math.random() < dt * 0.08) {
+        const surfType = world.getType(Math.floor(camera.position.x), Math.floor(camera.position.y) - 2, Math.floor(camera.position.z));
+        if (surfType === 'base_blue' || surfType === 'leaves' || surfType === 'birch_leaves' || surfType === 'dark_oak_leaves') {
+          audio.playBirdChirp();
+        }
+      }
+      // Wind gusts on mountain peaks (y > 45, random ~every 15s)
+      if (camera.position.y > 45 && Math.random() < dt * 0.04) {
+        audio.playWindGust();
+      }
+
       // ---- Campfire cooking: if player near campfire, auto-cook raw food ----
       if (Math.floor(elapsed / CAMPFIRE_COOK_INTERVAL) !== Math.floor((elapsed - dt) / CAMPFIRE_COOK_INTERVAL)) {
         const px = Math.floor(camera.position.x);
@@ -3167,6 +3205,32 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       const nowUnderwater = headBlock === 'water';
       if (nowUnderwater !== (isUnderwater)) {
         setIsUnderwater(nowUnderwater);
+        // Water splash particles when entering water
+        if (nowUnderwater && Math.abs(player.velocity.y) > 1) {
+          const splashCount = 6 + Math.floor(Math.abs(player.velocity.y) * 2);
+          for (let i = 0; i < splashCount; i++) {
+            const mat = new THREE.MeshStandardMaterial({ color: 0x3399ff, transparent: true, opacity: 0.7 });
+            const m = new THREE.Mesh(particleGeom, mat);
+            m.position.set(
+              camPos.x + (Math.random() - 0.5) * 1.5,
+              camPos.y + 0.5,
+              camPos.z + (Math.random() - 0.5) * 1.5
+            );
+            m.castShadow = false;
+            scene.add(m);
+            particles.push({
+              mesh: m,
+              velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * 3,
+                2 + Math.random() * 3,
+                (Math.random() - 0.5) * 3
+              ),
+              age: 0,
+              life: 0.4 + Math.random() * 0.3,
+            });
+          }
+          audio.playBlockBreak('sand_blue');
+        }
       }
       // Underwater fog: drastically reduce visibility
       if (nowUnderwater && scene.fog instanceof THREE.Fog) {
@@ -3803,6 +3867,12 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       playerRef.current.inventoryOpen = false;
       playerRef.current.breathTimer = 10;
     }
+    // Tier-based respawn invulnerability
+    const protDuration = TIER_RESPAWN_PROTECTION[balanceTier] * 1000;
+    setInvulnerable(true);
+    invulnerableRef.current = true;
+    setTimeout(() => { setInvulnerable(false); invulnerableRef.current = false; }, protDuration);
+    setDeathCause('Died'); // reset death cause
   };
 
   // Label for selected item
@@ -3826,7 +3896,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     if (xpInfo.level > prevLevelRef.current && prevLevelRef.current > 0) {
       setToast(`⬆️ Level Up! You are now level ${xpInfo.level}!`);
       setTimeout(() => setToast(null), 3000);
-      getAudio().playBlockPlace('beacon');
+      getAudio().playLevelUp();
       // Bonus: heal 4 hearts on level up
       const newHp = Math.min(20, healthRef.current + 8);
       healthRef.current = newHp;
@@ -4032,6 +4102,58 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           style={{
             background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,180,0,0.2) 100%)',
             animationDuration: '0.5s',
+          }}
+        />
+      )}
+
+      {/* Night vision potion — green tinted bright overlay */}
+      {activePotion === 'potion_night_vision' && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(0,255,0,0.05) 0%, rgba(0,180,0,0.12) 100%)',
+            mixBlendMode: 'screen',
+          }}
+        />
+      )}
+
+      {/* Speed potion — subtle blue motion lines */}
+      {activePotion === 'potion_speed' && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{
+            background: 'linear-gradient(90deg, rgba(100,150,255,0.08) 0%, transparent 20%, transparent 80%, rgba(100,150,255,0.08) 100%)',
+          }}
+        />
+      )}
+
+      {/* Strength potion — red power aura */}
+      {activePotion === 'potion_strength' && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(200,0,0,0.04) 0%, rgba(150,0,0,0.1) 100%)',
+          }}
+        />
+      )}
+
+      {/* Fire resistance — warm orange shimmer */}
+      {activePotion === 'potion_fire_resist' && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(255,150,0,0.04) 0%, rgba(200,80,0,0.1) 100%)',
+          }}
+        />
+      )}
+
+      {/* Low hunger — desaturated edges when hunger <= 3 */}
+      {hunger <= 3 && hunger > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{
+            background: 'radial-gradient(ellipse at center, transparent 50%, rgba(80,60,0,0.25) 100%)',
+            filter: 'saturate(0.7)',
           }}
         />
       )}
@@ -4460,6 +4582,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             setInventoryOpen(false);
             if (playerRef.current) playerRef.current.inventoryOpen = false;
           }}
+          armor={armor}
         />
       )}
 

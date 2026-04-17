@@ -123,6 +123,36 @@ export const TIER_LUCKY_MINING: Record<BalanceTier, number> = {
 // Campfire cooking: seconds per item
 export const CAMPFIRE_COOK_INTERVAL = 5; // 5 seconds per item
 
+// Tier-based damage reduction — small % damage reduction per tier
+export const TIER_DAMAGE_REDUCTION: Record<BalanceTier, number> = {
+  none:    0,     // no reduction
+  base:    0.03,  // 3% damage reduction
+  bronze:  0.06,  // 6%
+  silver:  0.10,  // 10%
+  gold:    0.15,  // 15%
+  diamond: 0.20,  // 20%
+};
+
+// Respawn invulnerability duration in seconds per tier
+export const TIER_RESPAWN_PROTECTION: Record<BalanceTier, number> = {
+  none:    3,   // 3 seconds
+  base:    4,   // 4 seconds
+  bronze:  5,   // 5 seconds
+  silver:  6,   // 6 seconds
+  gold:    8,   // 8 seconds
+  diamond: 10,  // 10 seconds
+};
+
+// Tier-exclusive bonus mob drops (extra loot from killing mobs)
+export const TIER_MOB_DROP_BONUS: Record<BalanceTier, number> = {
+  none:    0,    // no bonus
+  base:    0.1,  // 10% chance for extra drop
+  bronze:  0.15, // 15%
+  silver:  0.20, // 20%
+  gold:    0.30, // 30%
+  diamond: 0.40, // 40%
+};
+
 export const TIER_COSMETICS: Record<BalanceTier, TierCosmetics> = {
   none:    { chatColor: '#ffffff', namePrefix: '',  particleColor: 0xffffff, hasGlow: false, hasParticles: false },
   base:    { chatColor: '#0052ff', namePrefix: '⬢', particleColor: 0x0052ff, hasGlow: false, hasParticles: false },
