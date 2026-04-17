@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { WorldRenderer } from './World';
 import { BlockType } from '@/lib/blocks';
+import { ITEMS, ItemDef, Inventory } from '@/lib/items';
 
 interface PlayerOptions {
   camera: THREE.PerspectiveCamera;
@@ -11,17 +12,23 @@ interface PlayerOptions {
   spawn: { x: number; y: number; z: number };
 }
 
-// Per-block-type break time in seconds. Picked to feel Minecrafty without
-// being punishing — stone is slow, dirt is fast. No tools yet so these are
-// raw bare-hand times.
+// Per-block-type BARE-HAND break time in seconds.
 const BREAK_TIMES: Record<BlockType, number> = {
-  base_blue: 0.45,   // grass — quick
-  deep_blue: 0.35,   // dirt — quickest
-  ice_stone: 0.3,    // snow — very soft
-  cyan_wood: 1.1,    // wood — takes some effort
-  sand_blue: 0.35,   // sand — quick
-  royal_brick: 1.5,  // stone — slow by hand
+  base_blue: 0.45,
+  deep_blue: 0.35,
+  ice_stone: 0.3,
+  cyan_wood: 1.1,
+  sand_blue: 0.35,
+  royal_brick: 1.5,
+  planks: 0.7,
+  cobblestone: 1.6,
+  crafting_table: 0.9,
 };
+
+// Fall damage: >3 blocks fall = 1 HP per extra block.
+const FALL_DAMAGE_THRESHOLD = 3;
+// Minimum fall velocity magnitude to even consider damage.
+const FALL_DAMAGE_MIN_VEL = 9;
 
 const PLAYER_HALF_WIDTH = 0.3;
 const PLAYER_HEIGHT = 1.8;
@@ -69,15 +76,22 @@ export class PlayerController {
   // progress hits 1 we fire onBreak. The HUD renderer uses this to draw the
   // cracks overlay. (null x,y,z = stopped mining).
   public onBreakProgress: ((x: number | null, y: number | null, z: number | null, progress: number) => void) | null = null;
+  public onInventoryOpen: (() => void) | null = null;
+  public onFallDamage: ((damage: number) => void) | null = null;
+  // Accessor for the held tool's break multiplier. Game.tsx sets this so
+  // the player reads current tool data from the inventory ref.
+  public getHeldToolDef: (() => ItemDef | null) | null = null;
   public chatOpen = false;
+  public inventoryOpen = false; // blocks movement/input while open
 
   // --- Hold-to-break state ---
-  // While the left mouse button is down and pointer is locked, we track
-  // which block the player is aiming at and accumulate progress. If the
-  // target changes (player looks away or breaks through), progress resets.
   private mouseDownLeft = false;
   private breakTarget: { x: number; y: number; z: number } | null = null;
   private breakProgress = 0;
+
+  // --- Fall damage tracking ---
+  private fallStartY: number | null = null; // y when last grounded
+  private wasFalling = false;
 
   private handlers: Array<{ target: EventTarget; type: string; fn: any }> = [];
 
@@ -149,13 +163,26 @@ export class PlayerController {
     const onKeyDown = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
 
-      if (k === 't' && !this.chatOpen) {
+      // E = inventory toggle (works even when inventory is open)
+      if (k === 'e' && !this.chatOpen) {
+        e.preventDefault();
+        if (this.onInventoryOpen) this.onInventoryOpen();
+        return;
+      }
+
+      // Escape closes inventory if open
+      if (k === 'escape' && this.inventoryOpen) {
+        if (this.onInventoryOpen) this.onInventoryOpen();
+        return;
+      }
+
+      if (k === 't' && !this.chatOpen && !this.inventoryOpen) {
         e.preventDefault();
         if (this.onChatToggle) this.onChatToggle();
         return;
       }
 
-      if (this.chatOpen) return;
+      if (this.chatOpen || this.inventoryOpen) return;
 
       if (k === 'f') {
         this.flying = !this.flying;
@@ -175,7 +202,7 @@ export class PlayerController {
         return;
       }
 
-      if (/^[1-6]$/.test(k)) {
+      if (/^[1-9]$/.test(k)) {
         if (this.onHotbarSelect) this.onHotbarSelect(parseInt(k, 10) - 1);
         return;
       }
@@ -321,7 +348,8 @@ export class PlayerController {
   }
 
   update(dt: number) {
-    if (dt > 0.1) dt = 0.1; // clamp big steps
+    if (dt > 0.1) dt = 0.1;
+    if (this.inventoryOpen) return; // freeze movement while inventory is open
 
     const forward = new THREE.Vector3(
       -Math.sin(this.rotY),
@@ -416,6 +444,29 @@ export class PlayerController {
       }
     }
 
+    // ---- Fall damage ----
+    if (!this.flying) {
+      if (!this.isGrounded && this.velocity.y < 0) {
+        // Falling: record start if not already
+        if (this.fallStartY === null) {
+          this.fallStartY = this.position.y;
+        }
+        this.wasFalling = true;
+      }
+      if (this.isGrounded && this.wasFalling && this.fallStartY !== null) {
+        const fallDist = this.fallStartY - this.position.y;
+        if (fallDist > FALL_DAMAGE_THRESHOLD) {
+          const dmg = Math.floor(fallDist - FALL_DAMAGE_THRESHOLD);
+          if (dmg > 0 && this.onFallDamage) this.onFallDamage(dmg);
+        }
+        this.fallStartY = null;
+        this.wasFalling = false;
+      }
+      if (this.isGrounded && !this.wasFalling) {
+        this.fallStartY = null;
+      }
+    }
+
     // Footstep: once grounded and horizontally moving, let audio engine
     // rate-limit actual playback (it caps at 1 per 380 ms).
     const horizMoving = Math.abs(this.velocity.x) + Math.abs(this.velocity.z) > 0.5;
@@ -461,7 +512,13 @@ export class PlayerController {
           this.breakProgress = 0;
         }
         const type = this.world.getType(hit.x, hit.y, hit.z);
-        const breakTime = type ? BREAK_TIMES[type] ?? 0.6 : 0.6;
+        let breakTime = type ? BREAK_TIMES[type] ?? 0.6 : 0.6;
+        // Tool speed: if holding a tool with a breakMultiplier for this
+        // block type, multiply the break time down.
+        const toolDef = this.getHeldToolDef ? this.getHeldToolDef() : null;
+        if (toolDef && toolDef.breakMultiplier && type && toolDef.breakMultiplier[type]) {
+          breakTime *= toolDef.breakMultiplier[type]!;
+        }
         this.breakProgress += dt / breakTime;
         if (this.breakProgress >= 1) {
           // Done — fire the break, reset for the next block.

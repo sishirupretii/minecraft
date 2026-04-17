@@ -4,7 +4,10 @@ export type BlockType =
   | 'ice_stone'
   | 'cyan_wood'
   | 'sand_blue'
-  | 'royal_brick';
+  | 'royal_brick'
+  | 'planks'
+  | 'cobblestone'
+  | 'crafting_table';
 
 export const BLOCK_TYPES: BlockType[] = [
   'base_blue',
@@ -13,6 +16,9 @@ export const BLOCK_TYPES: BlockType[] = [
   'cyan_wood',
   'sand_blue',
   'royal_brick',
+  'planks',
+  'cobblestone',
+  'crafting_table',
 ];
 
 export interface Block {

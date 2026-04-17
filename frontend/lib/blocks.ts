@@ -9,7 +9,10 @@ export type BlockType =
   | 'ice_stone'
   | 'cyan_wood'
   | 'sand_blue'
-  | 'royal_brick';
+  | 'royal_brick'
+  | 'planks'
+  | 'cobblestone'
+  | 'crafting_table';
 
 export const BLOCK_TYPES: BlockType[] = [
   'base_blue',
@@ -18,6 +21,9 @@ export const BLOCK_TYPES: BlockType[] = [
   'cyan_wood',
   'sand_blue',
   'royal_brick',
+  'planks',
+  'cobblestone',
+  'crafting_table',
 ];
 
 export interface BlockMeta {
@@ -41,4 +47,10 @@ export const BLOCKS: Record<BlockType, BlockMeta> = {
   sand_blue:   { type: 'sand_blue',   color: 0xe6d9a1, colorStr: '#e6d9a1', label: 'Sand' },
   // Stone gray — general underground / desert sub-surface
   royal_brick: { type: 'royal_brick', color: 0x7a7a7a, colorStr: '#7a7a7a', label: 'Stone' },
+  // Planks — crafted from wood logs
+  planks: { type: 'planks', color: 0xc4973a, colorStr: '#c4973a', label: 'Planks' },
+  // Cobblestone — dropped when mining stone
+  cobblestone: { type: 'cobblestone', color: 0x6a6a6a, colorStr: '#6a6a6a', label: 'Cobblestone' },
+  // Crafting table — crafted from planks, enables advanced recipes
+  crafting_table: { type: 'crafting_table', color: 0xa67c52, colorStr: '#a67c52', label: 'Crafting Table' },
 };

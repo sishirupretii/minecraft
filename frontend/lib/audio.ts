@@ -16,6 +16,9 @@ const BREAK_VOICE: Record<BlockType, { cutoff: number; pitch: number }> = {
   cyan_wood:   { cutoff: 1400, pitch: 220 }, // wood — mid crack
   sand_blue:   { cutoff: 400,  pitch: 100 }, // sand — soft shh
   royal_brick: { cutoff: 800,  pitch: 150 }, // stone — muted clack
+  planks:      { cutoff: 1200, pitch: 200 }, // planks — woody snap
+  cobblestone: { cutoff: 700,  pitch: 140 }, // cobblestone — gritty
+  crafting_table: { cutoff: 1100, pitch: 190 }, // crafting table — woody
 };
 
 export class AudioEngine {

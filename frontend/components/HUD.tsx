@@ -48,8 +48,9 @@ export default function HUD({
       {!worldLoaded && (
         <div className="pointer-events-none absolute left-0 right-0 top-0 h-0.5 bg-white/10">
           <div
-            className="h-full bg-gradient-to-r from-[#0052ff] to-[#4a7cff] transition-all"
+            className="h-full transition-all"
             style={{
+              background: 'linear-gradient(90deg, #5cb85c, #8bbf68)',
               width:
                 totalCount > 0
                   ? `${Math.min(100, (loadedCount / totalCount) * 100)}%`

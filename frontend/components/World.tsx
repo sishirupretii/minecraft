@@ -27,6 +27,9 @@ const MATERIAL_PARAMS: Record<BlockType, { roughness: number; metalness: number 
   cyan_wood:   { roughness: 0.82, metalness: 0 },    // oak wood — rough grain
   sand_blue:   { roughness: 0.95, metalness: 0 },    // sand — dusty matte
   royal_brick: { roughness: 0.88, metalness: 0 },    // stone — rough
+  planks:      { roughness: 0.8,  metalness: 0 },    // wooden planks — smooth grain
+  cobblestone: { roughness: 0.92, metalness: 0 },    // cobblestone — very rough
+  crafting_table: { roughness: 0.75, metalness: 0 },  // crafting table — polished wood
 };
 
 // Deterministic per-position color jitter. Same block at same coord always
