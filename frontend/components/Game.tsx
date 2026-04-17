@@ -82,6 +82,7 @@ import LandClaimPanel from './panels/LandClaimPanel';
 import TierPerksPanel from './panels/TierPerksPanel';
 import ControlsPanel from './panels/ControlsPanel';
 import SettingsPanel from './panels/SettingsPanel';
+import BountyBoard from './panels/BountyBoard';
 import Minimap from './Minimap';
 
 interface Props {
@@ -195,6 +196,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [tierPerksOpen, setTierPerksOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bountyBoardOpen, setBountyBoardOpen] = useState(false);
   const [gameVolume, setGameVolume] = useState(1.0);
   const [gameFov, setGameFov] = useState(75);
   const [renderDist, setRenderDist] = useState(90);
@@ -3888,6 +3890,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       if (e.key.toLowerCase() === 'o') {
         setSettingsOpen(v => !v);
       }
+      if (e.key.toLowerCase() === 'b') {
+        setBountyBoardOpen(v => !v);
+      }
       if (e.key.toLowerCase() === 'm') {
         setShowMinimap(v => !v);
       }
@@ -4843,6 +4848,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         onClose={() => setAchievementsOpen(false)}
         achievements={ACHIEVEMENT_DEFS}
         earned={earnedAchievements}
+        stats={statsRef.current}
       />
 
       <LandClaimPanel
@@ -4909,6 +4915,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         onToggleCoords={() => setShowCoords(v => !v)}
         shadows={shadowsOn}
         onToggleShadows={() => setShadowsOn(v => !v)}
+      />
+
+      <BountyBoard
+        visible={bountyBoardOpen}
+        onClose={() => setBountyBoardOpen(false)}
+        mobsKilled={statsRef.current.mobsKilled}
+        walletConnected={!!walletAddress}
+        currentTier={balanceTier}
       />
 
       {/* WebGL error */}
