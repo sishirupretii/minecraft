@@ -42,6 +42,7 @@ export interface PlayerStats {
   foodEaten: number;
   maxKillStreak: number;
   currentLevel: number;
+  baseCoinsCollected?: number;
 }
 
 export interface LeaderboardEntry {

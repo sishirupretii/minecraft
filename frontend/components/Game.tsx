@@ -177,6 +177,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     copperMined: 0, amethystMined: 0,
     luckyDrops: 0, maxMiningCombo: 0,
     fishCaught: 0, foodEaten: 0, maxKillStreak: 0, currentLevel: 0,
+    baseCoinsCollected: 0,
   });
 
   // ---- On-chain: Achievements ----
@@ -1227,8 +1228,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       // Warden boss — spawns deep underground (rare, 1 per world)
       wardens.spawn(1, 32 + Math.floor(Math.random() * 64), 32 + Math.floor(Math.random() * 64), 10);
 
-      // ---- Spawn Base coins scattered across the world ----
-      const coinCount = 30;
+      // ---- Spawn Base coins scattered across the world (surface + underground) ----
+      const coinCount = 60; // 60 surface coins
       for (let ci = 0; ci < coinCount; ci++) {
         // Find a random surface position
         for (let attempt = 0; attempt < 10; attempt++) {
@@ -1246,6 +1247,41 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           if (topY > 0 && topY < 70) {
             spawnBaseCoin(cx + 0.5, topY + 1.5, cz + 0.5);
             break;
+          }
+        }
+      }
+      // Additional underground coins in caves (exploration reward)
+      const undergroundCoins = 25;
+      for (let ci = 0; ci < undergroundCoins; ci++) {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const cx = 8 + Math.floor(Math.random() * 112);
+          const cz = 8 + Math.floor(Math.random() * 112);
+          const cy = 3 + Math.floor(Math.random() * 10); // deep
+          // Check if there's air at this position (inside a cave)
+          if (!world.has(cx, cy, cz) && world.has(cx, cy - 1, cz)) {
+            spawnBaseCoin(cx + 0.5, cy + 0.5, cz + 0.5);
+            break;
+          }
+        }
+      }
+      // Cluster of coins near spawn point for easy early-game discovery
+      const sp = spawnPointRef.current;
+      if (sp) {
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2;
+          const r = 6 + Math.random() * 4;
+          const ccx = Math.floor(sp.x + Math.cos(angle) * r);
+          const ccz = Math.floor(sp.z + Math.sin(angle) * r);
+          let topY = -1;
+          for (let ty = 80; ty >= 1; ty--) {
+            const bt = world.getType(ccx, ty, ccz);
+            if (bt && bt !== 'water' && bt !== 'lava' && bt !== 'leaves') {
+              topY = ty;
+              break;
+            }
+          }
+          if (topY > 0) {
+            spawnBaseCoin(ccx + 0.5, topY + 1.5, ccz + 0.5);
           }
         }
       }
@@ -1691,6 +1727,50 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           statsRef.current.luckyDrops++;
           // Spawn extra XP orbs for lucky find
           spawnXPOrbs(x, y, z, 3);
+        }
+        // ⬢ Base coin hidden in bricks — random chance when breaking stone/brick blocks
+        const coinBlocks: BlockType[] = [
+          'cobblestone', 'stone_bricks', 'mossy_cobblestone', 'bricks',
+          'royal_brick', 'deepslate', 'nether_bricks', 'sandstone' as BlockType,
+        ];
+        if (coinBlocks.includes(t)) {
+          // Base coin drop chance: 2% base, up to 6% for diamond tier
+          const coinChance = 0.02 + (TIER_LUCKY_MINING[balanceTier] * 0.5);
+          if (Math.random() < coinChance) {
+            // Bonus: emerald + XP
+            const coinEmeralds = 1 + Math.floor(Math.random() * 2);
+            const coinXp = 30 + Math.floor(Math.random() * 30);
+            nextInv = addItem(nextInv, 'emerald', coinEmeralds);
+            const newCoinXp = totalXpRef.current + coinXp;
+            totalXpRef.current = newCoinXp;
+            setTotalXp(newCoinXp);
+            statsRef.current.emeraldsEarned += coinEmeralds;
+            statsRef.current.baseCoinsCollected = (statsRef.current.baseCoinsCollected ?? 0) + 1;
+            setToast(`⬢ Base Coin found in brick! (#${statsRef.current.baseCoinsCollected}) +${coinEmeralds} Emerald, +${coinXp} XP`);
+            setTimeout(() => setToast(null), 2500);
+            audio.playLevelUp();
+            // Visual: spawn a spinning Base coin at break position that auto-collects
+            spawnBaseCoin(x + 0.5, y + 1.5, z + 0.5);
+            // Extra sparkle particles in Base blue
+            for (let sp = 0; sp < 8; sp++) {
+              const sparkMat = new THREE.MeshBasicMaterial({
+                color: 0x0052ff, transparent: true, opacity: 0.9,
+              });
+              const sm = new THREE.Mesh(particleGeom, sparkMat);
+              sm.position.set(x + 0.5, y + 0.5, z + 0.5);
+              sm.castShadow = false;
+              scene.add(sm);
+              particles.push({
+                mesh: sm,
+                velocity: new THREE.Vector3(
+                  (Math.random() - 0.5) * 3,
+                  1.5 + Math.random() * 2,
+                  (Math.random() - 0.5) * 3,
+                ),
+                age: 0, life: 0.7 + Math.random() * 0.3,
+              });
+            }
+          }
         }
         // On-chain: Legendary item discovery (very rare, wallet-exclusive)
         if (walletAddress && (t === 'diamond_ore' || t === 'emerald_ore' || t === 'amethyst') && Math.random() < 0.08) {
@@ -4480,7 +4560,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           inventoryRef.current = inv;
           setInventory(inv);
           statsRef.current.emeraldsEarned += 1;
-          setToast(`⬢ Base Coin Collected! +${rewardXp} XP, +1 Emerald`);
+          statsRef.current.baseCoinsCollected = (statsRef.current.baseCoinsCollected ?? 0) + 1;
+          setToast(`⬢ Base Coin Collected! (#${statsRef.current.baseCoinsCollected}) +${rewardXp} XP, +1 Emerald`);
           setTimeout(() => setToast(null), 2000);
           audio.playLevelUp();
           // Sparkle particles
@@ -5722,6 +5803,12 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
             if (cmd === 'level' || cmd === 'lvl') {
               appendChat({ username: 'system', message: `⭐ Level ${xpInfo.level} | XP: ${xpInfo.xpInLevel}/${xpInfo.xpToNext} (${Math.floor((xpInfo.xpInLevel / Math.max(1, xpInfo.xpToNext)) * 100)}%) | Tier bonus: ${TIER_XP_MULTIPLIER[balanceTier]}x`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'coins' || cmd === 'basecoins') {
+              const c = statsRef.current.baseCoinsCollected ?? 0;
+              appendChat({ username: 'system', message: `⬢ Base Coins collected: ${c} | Mine cobblestone/bricks for a chance at hidden coins`, isSystem: true });
               return;
             }
 
