@@ -17,6 +17,7 @@ interface Props {
   onInventoryChange: (inv: Inventory) => void;
   onCraft: (recipe: Recipe) => void;
   nearCraftingTable: boolean; // player is within 3 blocks of a crafting_table
+  nearFurnace?: boolean;      // player is within 4 blocks of a furnace
   onClose: () => void;
 }
 
@@ -130,6 +131,7 @@ export default function InventoryScreen({
   onInventoryChange,
   onCraft,
   nearCraftingTable,
+  nearFurnace = false,
   onClose,
 }: Props) {
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
@@ -138,11 +140,12 @@ export default function InventoryScreen({
   const recipeStates = useMemo(() => {
     return RECIPES.map((r) => ({
       recipe: r,
-      craftable: canCraft(inventory, r) && (!r.needsTable || nearCraftingTable),
+      craftable: canCraft(inventory, r) && (!r.needsTable || nearCraftingTable) && (!r.needsFurnace || nearFurnace),
       hasIngredients: canCraft(inventory, r),
       needsTableButFar: r.needsTable && !nearCraftingTable,
+      needsFurnaceButFar: r.needsFurnace && !nearFurnace,
     }));
-  }, [inventory, nearCraftingTable]);
+  }, [inventory, nearCraftingTable, nearFurnace]);
 
   function handleSlotClick(index: number) {
     if (selectedSlot === null) {
@@ -179,16 +182,70 @@ export default function InventoryScreen({
       >
         {/* Left: Inventory grid */}
         <div className="flex flex-col gap-3">
-          <div
-            style={{
-              fontFamily: "'Press Start 2P', monospace",
-              fontSize: '10px',
-              color: 'rgba(255,255,255,0.7)',
-              textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
-              marginBottom: '4px',
-            }}
-          >
-            INVENTORY
+          <div className="flex items-center justify-between" style={{ marginBottom: '4px' }}>
+            <span
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '10px',
+                color: 'rgba(255,255,255,0.7)',
+                textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
+              }}
+            >
+              INVENTORY
+            </span>
+            <button
+              onClick={() => {
+                // Sort inventory: group same items, sort by type
+                const hotbar = inventory.slice(0, HOTBAR_SIZE);
+                const main = inventory.slice(HOTBAR_SIZE, INVENTORY_SIZE);
+                // Consolidate stacks
+                const itemMap = new Map<string, { item: ItemType; count: number; durability?: number }>();
+                for (const slot of main) {
+                  if (!slot) continue;
+                  const key = slot.durability !== undefined ? `${slot.item}_${slot.durability}` : slot.item;
+                  const existing = itemMap.get(key);
+                  if (existing && slot.durability === undefined) {
+                    existing.count += slot.count;
+                  } else {
+                    itemMap.set(key, { ...slot });
+                  }
+                }
+                // Sort by category then name
+                const sorted = Array.from(itemMap.values()).sort((a, b) => {
+                  const da = ITEMS[a.item];
+                  const db = ITEMS[b.item];
+                  const catA = da.isBlock ? 0 : da.isTool ? 1 : da.isArmor ? 2 : da.isFood ? 3 : 4;
+                  const catB = db.isBlock ? 0 : db.isTool ? 1 : db.isArmor ? 2 : db.isFood ? 3 : 4;
+                  if (catA !== catB) return catA - catB;
+                  return da.label.localeCompare(db.label);
+                });
+                // Rebuild inventory
+                const newMain: (InventorySlot | null)[] = [];
+                for (const item of sorted) {
+                  const def = ITEMS[item.item];
+                  let remaining = item.count;
+                  while (remaining > 0) {
+                    const add = Math.min(remaining, def.stackSize);
+                    newMain.push({ item: item.item, count: add, durability: item.durability });
+                    remaining -= add;
+                  }
+                }
+                while (newMain.length < INVENTORY_SIZE - HOTBAR_SIZE) newMain.push(null);
+                const newInv = [...hotbar, ...newMain.slice(0, INVENTORY_SIZE - HOTBAR_SIZE)];
+                onInventoryChange(newInv);
+              }}
+              style={{
+                fontFamily: "'Press Start 2P', monospace",
+                fontSize: '7px',
+                color: '#aaa',
+                background: 'rgba(0,0,0,0.4)',
+                border: '1px solid #555',
+                padding: '2px 6px',
+                cursor: 'pointer',
+              }}
+            >
+              SORT
+            </button>
           </div>
 
           {/* Main inventory (3 rows of 9) */}
@@ -246,7 +303,7 @@ export default function InventoryScreen({
             className="flex flex-col gap-1 overflow-y-auto pr-1"
             style={{ maxHeight: '320px' }}
           >
-            {recipeStates.map(({ recipe, craftable, hasIngredients, needsTableButFar }) => {
+            {recipeStates.map(({ recipe, craftable, hasIngredients, needsTableButFar, needsFurnaceButFar }) => {
               const resultDef = ITEMS[recipe.result.item];
               return (
                 <button
@@ -294,6 +351,7 @@ export default function InventoryScreen({
                     >
                       {recipe.ingredients.map((ing) => `${ITEMS[ing.item].label}×${ing.count}`).join(' + ')}
                       {needsTableButFar ? ' (need table)' : ''}
+                      {needsFurnaceButFar ? ' (need furnace)' : ''}
                     </span>
                   </div>
                 </button>
@@ -312,6 +370,19 @@ export default function InventoryScreen({
               }}
             >
               ◆ Crafting table in range
+            </div>
+          )}
+          {nearFurnace && (
+            <div
+              style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '14px',
+                color: '#e0c080',
+                textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
+                marginTop: '2px',
+              }}
+            >
+              ◆ Furnace in range
             </div>
           )}
         </div>

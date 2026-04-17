@@ -195,6 +195,10 @@ export function registerSocketHandlers(io: Server) {
           .reverse();
         socket.emit('chat:history', chatMsgs);
 
+        // Send land claims on join
+        supabase.from('land_claims').select('chunk_x, chunk_z, wallet_address, username, claimed_at')
+          .then(({ data }) => socket.emit('land:data', data ?? []));
+
         // Announce
         io.emit('player:joined', {
           id: socket.id,
@@ -361,6 +365,224 @@ export function registerSocketHandlers(io: Server) {
         .then(({ error }) => {
           if (error) console.error('[socket] chat insert err:', error.message);
         });
+    });
+
+    // ---- Stats tracking ----
+    socket.on('player:stats', async (p: { blocksPlaced: number; blocksBroken: number; mobsKilled: number; deaths: number; playTime: number }) => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      // Upsert to player_stats table (increment counters)
+      try {
+        await supabase.rpc('increment_player_stats', {
+          p_username: self.username,
+          p_wallet: self.walletAddress ?? null,
+          p_blocks_placed: p.blocksPlaced ?? 0,
+          p_blocks_broken: p.blocksBroken ?? 0,
+          p_mobs_killed: p.mobsKilled ?? 0,
+          p_deaths: p.deaths ?? 0,
+          p_play_time: p.playTime ?? 0,
+        }).then(({ error }) => {
+          if (error) console.error('[stats] upsert err:', error.message);
+        });
+      } catch (err) {
+        console.error('[stats] err:', err);
+      }
+    });
+
+    // ---- Leaderboard ----
+    socket.on('leaderboard:get', async () => {
+      try {
+        const { data, error } = await supabase
+          .from('player_stats')
+          .select('username, wallet_address, blocks_placed, blocks_broken, mobs_killed, deaths, play_time_seconds')
+          .order('mobs_killed', { ascending: false })
+          .limit(20);
+        if (error) {
+          console.error('[leaderboard] err:', error.message);
+          return;
+        }
+        const entries = (data ?? []).map((row: any, i: number) => ({
+          rank: i + 1,
+          username: row.username,
+          wallet_address: row.wallet_address,
+          score: (row.mobs_killed ?? 0) * 5 + Math.floor((row.blocks_placed ?? 0) / 10) + Math.floor((row.blocks_broken ?? 0) / 10),
+          blocks_placed: row.blocks_placed ?? 0,
+          mobs_killed: row.mobs_killed ?? 0,
+          balance_tier: 'none',
+        }));
+        // Sort by computed score
+        entries.sort((a: any, b: any) => b.score - a.score);
+        entries.forEach((e: any, i: number) => e.rank = i + 1);
+        socket.emit('leaderboard:data', entries);
+      } catch (err) {
+        console.error('[leaderboard] err:', err);
+      }
+    });
+
+    // ---- Achievements ----
+    socket.on('achievement:unlock', async (p: { achievementId: string }) => {
+      const self = players.get(socket.id);
+      if (!self || !self.walletAddress) return;
+      try {
+        await supabase.from('achievements').upsert({
+          wallet_address: self.walletAddress,
+          achievement_id: p.achievementId,
+          username: self.username,
+          unlocked_at: new Date().toISOString(),
+        }, { onConflict: 'wallet_address,achievement_id' });
+        // Announce in chat
+        io.emit('chat:received', {
+          username: 'system',
+          message: `🏆 ${self.username} unlocked achievement: ${p.achievementId}!`,
+          isSystem: true,
+        });
+      } catch (err) {
+        console.error('[achievement] err:', err);
+      }
+    });
+
+    socket.on('achievement:list', async () => {
+      const self = players.get(socket.id);
+      if (!self || !self.walletAddress) {
+        socket.emit('achievement:data', []);
+        return;
+      }
+      try {
+        const { data } = await supabase
+          .from('achievements')
+          .select('achievement_id, unlocked_at')
+          .eq('wallet_address', self.walletAddress);
+        socket.emit('achievement:data', data ?? []);
+      } catch (err) {
+        console.error('[achievement] err:', err);
+        socket.emit('achievement:data', []);
+      }
+    });
+
+    // ---- Land Claims ----
+    socket.on('land:claim', async (p: { chunkX: number; chunkZ: number }) => {
+      const self = players.get(socket.id);
+      if (!self || !self.walletAddress) {
+        socket.emit('chat:received', { username: 'system', message: 'Connect a wallet to claim land.', isSystem: true });
+        return;
+      }
+      try {
+        // Check if already claimed
+        const { data: existing } = await supabase
+          .from('land_claims')
+          .select('wallet_address, username')
+          .eq('chunk_x', p.chunkX)
+          .eq('chunk_z', p.chunkZ)
+          .maybeSingle();
+        if (existing) {
+          socket.emit('chat:received', {
+            username: 'system',
+            message: `This chunk is already claimed by ${existing.username}.`,
+            isSystem: true,
+          });
+          return;
+        }
+        // Max 4 claims per wallet
+        const { count } = await supabase
+          .from('land_claims')
+          .select('*', { count: 'exact', head: true })
+          .eq('wallet_address', self.walletAddress);
+        if ((count ?? 0) >= 4) {
+          socket.emit('chat:received', { username: 'system', message: 'Max 4 land claims per wallet.', isSystem: true });
+          return;
+        }
+        await supabase.from('land_claims').insert({
+          chunk_x: p.chunkX,
+          chunk_z: p.chunkZ,
+          wallet_address: self.walletAddress,
+          username: self.username,
+          claimed_at: new Date().toISOString(),
+        });
+        io.emit('land:claimed', { chunkX: p.chunkX, chunkZ: p.chunkZ, walletAddress: self.walletAddress, username: self.username });
+        io.emit('chat:received', {
+          username: 'system',
+          message: `⛳ ${self.username} claimed chunk (${p.chunkX}, ${p.chunkZ})!`,
+          isSystem: true,
+        });
+      } catch (err) {
+        console.error('[land] claim err:', err);
+      }
+    });
+
+    socket.on('land:unclaim', async (p: { chunkX: number; chunkZ: number }) => {
+      const self = players.get(socket.id);
+      if (!self || !self.walletAddress) return;
+      try {
+        await supabase.from('land_claims')
+          .delete()
+          .eq('chunk_x', p.chunkX)
+          .eq('chunk_z', p.chunkZ)
+          .eq('wallet_address', self.walletAddress);
+        io.emit('land:unclaimed', { chunkX: p.chunkX, chunkZ: p.chunkZ });
+      } catch (err) {
+        console.error('[land] unclaim err:', err);
+      }
+    });
+
+    socket.on('land:list', async () => {
+      try {
+        const { data } = await supabase
+          .from('land_claims')
+          .select('chunk_x, chunk_z, wallet_address, username, claimed_at');
+        socket.emit('land:data', data ?? []);
+      } catch (err) {
+        console.error('[land] list err:', err);
+        socket.emit('land:data', []);
+      }
+    });
+
+    // ---- Trading ----
+    socket.on('trade:offer', (p: { toUsername: string; offeredItems: Array<{ item: string; count: number }> }) => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      const target = Array.from(players.values()).find(
+        (pl) => pl.username.toLowerCase() === p.toUsername.toLowerCase(),
+      );
+      if (!target) {
+        socket.emit('chat:received', { username: 'system', message: `Player "${p.toUsername}" not found.`, isSystem: true });
+        return;
+      }
+      const targetSocket = io.sockets.sockets.get(target.id);
+      if (targetSocket) {
+        targetSocket.emit('trade:incoming', {
+          fromUsername: self.username,
+          fromWallet: self.walletAddress,
+          offeredItems: p.offeredItems,
+        });
+        socket.emit('chat:received', { username: 'system', message: `Trade offer sent to ${target.username}.`, isSystem: true });
+      }
+    });
+
+    socket.on('trade:accept', (p: { fromUsername: string }) => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      const from = Array.from(players.values()).find(
+        (pl) => pl.username.toLowerCase() === p.fromUsername.toLowerCase(),
+      );
+      if (!from) return;
+      const fromSocket = io.sockets.sockets.get(from.id);
+      if (fromSocket) {
+        fromSocket.emit('trade:accepted', { byUsername: self.username });
+        socket.emit('chat:received', { username: 'system', message: `Trade with ${from.username} accepted!`, isSystem: true });
+      }
+    });
+
+    socket.on('trade:reject', (p: { fromUsername: string }) => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      const from = Array.from(players.values()).find(
+        (pl) => pl.username.toLowerCase() === p.fromUsername.toLowerCase(),
+      );
+      if (!from) return;
+      const fromSocket = io.sockets.sockets.get(from.id);
+      if (fromSocket) {
+        fromSocket.emit('trade:rejected', { byUsername: self.username });
+      }
     });
 
     socket.on('disconnect', () => {

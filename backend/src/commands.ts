@@ -16,7 +16,7 @@ export function handleCommand(cmd: string, args: string[], ctx: CommandContext) 
     case 'help': {
       socket.emit('chat:received', {
         username: 'system',
-        message: 'Commands: /tp <user>, /spawn, /players, /help',
+        message: 'Commands: /tp <user>, /spawn, /players, /help, /claim, /unclaim, /trade <user>, /profile, /lb, /achievements',
         isSystem: true,
       });
       return;
@@ -79,6 +79,54 @@ export function handleCommand(cmd: string, args: string[], ctx: CommandContext) 
         message: `Teleported to ${match.username}.`,
         isSystem: true,
       });
+      return;
+    }
+
+    case 'claim': {
+      if (!self.walletAddress) {
+        socket.emit('chat:received', { username: 'system', message: 'Connect a wallet to claim land.', isSystem: true });
+        return;
+      }
+      const chunkX = Math.floor(self.x / 16);
+      const chunkZ = Math.floor(self.z / 16);
+      socket.emit('land:do_claim', { chunkX, chunkZ });
+      return;
+    }
+
+    case 'unclaim': {
+      if (!self.walletAddress) {
+        socket.emit('chat:received', { username: 'system', message: 'Connect a wallet first.', isSystem: true });
+        return;
+      }
+      const uchunkX = Math.floor(self.x / 16);
+      const uchunkZ = Math.floor(self.z / 16);
+      socket.emit('land:do_unclaim', { chunkX: uchunkX, chunkZ: uchunkZ });
+      return;
+    }
+
+    case 'trade': {
+      const tradeTarget = args[0];
+      if (!tradeTarget) {
+        socket.emit('chat:received', { username: 'system', message: 'Usage: /trade <username>', isSystem: true });
+        return;
+      }
+      socket.emit('trade:init', { targetUsername: tradeTarget });
+      return;
+    }
+
+    case 'profile': {
+      socket.emit('profile:open');
+      return;
+    }
+
+    case 'leaderboard':
+    case 'lb': {
+      socket.emit('leaderboard:open');
+      return;
+    }
+
+    case 'achievements': {
+      socket.emit('achievements:open');
       return;
     }
 

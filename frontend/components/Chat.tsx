@@ -8,6 +8,9 @@ export interface ChatMsg {
   message: string;
   isSystem?: boolean;
   ts: number;
+  nameColor?: string; // tier-based name color
+  tierBadge?: string; // tier label prefix e.g. 'DIAMOND'
+  tierBadgeColor?: string; // badge color
 }
 
 interface Props {
@@ -72,7 +75,24 @@ export default function Chat({ messages, open, onOpen, onClose, onSend }: Props)
                 <span className="text-cyan-300/90">{m.message}</span>
               ) : (
                 <>
-                  <span className="font-semibold text-[#59a5ff]">{m.username}</span>
+                  {m.tierBadge && (
+                    <span
+                      style={{
+                        fontSize: '8px',
+                        fontFamily: "'Press Start 2P', monospace",
+                        color: m.tierBadgeColor || '#888',
+                        background: 'rgba(0,0,0,0.4)',
+                        border: `1px solid ${m.tierBadgeColor || '#888'}`,
+                        padding: '1px 4px',
+                        marginRight: '4px',
+                        verticalAlign: 'middle',
+                        borderRadius: '2px',
+                      }}
+                    >
+                      {m.tierBadge}
+                    </span>
+                  )}
+                  <span className="font-semibold" style={{ color: m.nameColor || '#59a5ff' }}>{m.username}</span>
                   <span className="text-white/90">: {m.message}</span>
                 </>
               )}

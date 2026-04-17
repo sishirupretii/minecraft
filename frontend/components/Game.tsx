@@ -10,18 +10,56 @@ import {
   Inventory,
   InventorySlot,
   HOTBAR_SIZE,
+  FOOD_ITEMS,
   createInventory,
   addItem,
   removeFromSlot,
   useTool,
   getBlockDrop,
+  BLOCK_XP,
+  ArmorSlots,
+  createArmorSlots,
+  applyArmorReduction,
+  countItem,
+  removeItem,
 } from '@/lib/items';
 import { RECIPES, Recipe, canCraft, craft } from '@/lib/recipes';
 import { getAudio } from '@/lib/audio';
+import {
+  PlayerStats,
+  LandClaim,
+  BalanceTier,
+} from '@/lib/chain/types';
+import {
+  getTierForBalance,
+  getTierInfo,
+  canAccessBlock,
+  TIER_COSMETICS,
+  TIER_XP_MULTIPLIER,
+  TIER_KILL_BOUNTY,
+  WALLET_REWARD_INTERVAL_MS,
+  TIER_MAX_ENCHANT,
+  TIER_BEACON_MULTIPLIER,
+  TIER_MINING_SPEED,
+  TIER_SPEED_BONUS,
+  TIER_KEEP_INVENTORY,
+  TIER_LUCKY_MINING,
+  CAMPFIRE_COOK_INTERVAL,
+} from '@/lib/chain/constants';
+import {
+  ACHIEVEMENT_DEFS,
+  checkNewAchievements,
+  getAchievementDef,
+} from '@/lib/chain/achievements';
+import {
+  getChunkCoords,
+  chunkKey,
+  canModifyBlock,
+} from '@/lib/chain/landClaims';
 import { WorldRenderer } from './World';
 import { PlayerController } from './Player';
 import { OtherPlayersManager } from './OtherPlayers';
-import { CowManager, PigManager, ChickenManager } from './Mobs';
+import { CowManager, PigManager, ChickenManager, ZombieManager, SkeletonManager, CreeperManager, SpiderManager, WolfManager, EndermanManager, IronGolemManager, SlimeManager, BatManager, VillagerManager, WitchManager, BlazeManager, PhantomManager, FoxManager, GhastManager, ParrotManager, TurtleManager } from './Mobs';
 import { FlowerManager } from './Flowers';
 import Hotbar from './Hotbar';
 import Chat, { ChatMsg } from './Chat';
@@ -29,11 +67,22 @@ import HUD from './HUD';
 import PlayerList from './PlayerList';
 import HealthHunger from './HealthHunger';
 import InventoryScreen from './InventoryScreen';
+import DeathScreen from './DeathScreen';
+import XPBar, { computeLevel } from './XPBar';
+import ProfilePanel from './panels/ProfilePanel';
+import LeaderboardPanel from './panels/LeaderboardPanel';
+import AchievementToast from './panels/AchievementToast';
+import AchievementPanel from './panels/AchievementPanel';
+import LandClaimPanel from './panels/LandClaimPanel';
+import TierPerksPanel from './panels/TierPerksPanel';
+import ControlsPanel from './panels/ControlsPanel';
+import Minimap from './Minimap';
 
 interface Props {
   username: string;
   walletAddress?: string;
   verifiedBase?: boolean;
+  ethBalance?: bigint;
 }
 
 let chatIdCounter = 1;
@@ -54,12 +103,23 @@ const HEALTH_REGEN_HUNGER_MIN = 14;
 // Starvation: lose HP when hunger = 0
 const STARVATION_RATE = 0.3;
 
-export default function Game({ username, walletAddress, verifiedBase }: Props) {
+export default function Game({ username, walletAddress, verifiedBase, ethBalance }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<PlayerController | null>(null);
 
   // ---- Inventory (slot-based) ----
-  const [inventory, setInventory] = useState<Inventory>(createInventory);
+  const [inventory, setInventory] = useState<Inventory>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = window.localStorage.getItem('bc_inventory');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length === 36) return parsed;
+        }
+      } catch {}
+    }
+    return createInventory();
+  });
   const inventoryRef = useRef<Inventory>(inventory);
   useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
 
@@ -75,10 +135,69 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
   useEffect(() => { healthRef.current = health; }, [health]);
   useEffect(() => { hungerRef.current = hunger; }, [hunger]);
 
+  // ---- XP ----
+  const [totalXp, setTotalXp] = useState(0);
+  const totalXpRef = useRef(0);
+  useEffect(() => { totalXpRef.current = totalXp; }, [totalXp]);
+
+  // ---- Armor ----
+  const [armor, setArmor] = useState<ArmorSlots>(createArmorSlots);
+  const armorRef = useRef<ArmorSlots>(armor);
+  useEffect(() => { armorRef.current = armor; }, [armor]);
+
+  // ---- Shield / blocking ----
+  const [isBlocking, setIsBlocking] = useState(false);
+  const isBlockingRef = useRef(false);
+  useEffect(() => { isBlockingRef.current = isBlocking; }, [isBlocking]);
+
+  // ---- Breath (for drowning HUD) ----
+  const [breath, setBreath] = useState(10);
+  const breathRef = useRef(10);
+
+  // ---- On-chain: Balance tier ----
+  const balanceTier: BalanceTier = walletAddress && ethBalance !== undefined
+    ? getTierForBalance(ethBalance) : verifiedBase ? 'base' : 'none';
+  const tierInfo = getTierInfo(balanceTier);
+
+  // ---- On-chain: Stats tracking ----
+  const statsRef = useRef<PlayerStats>({
+    blocksPlaced: 0, blocksBroken: 0, mobsKilled: 0, deaths: 0,
+    playTimeSeconds: 0, diamondsFound: 0,
+    itemsCrafted: 0, itemsEnchanted: 0, villagerTrades: 0,
+    emeraldsEarned: 0, beaconsPlaced: 0, enderPearlsThrown: 0,
+    distanceWalked: 0, highestY: 0, lowestY: 64, longestLifeSeconds: 0,
+    currentLifeSeconds: 0, walletConnected: false, currentTier: 'none',
+    copperMined: 0, amethystMined: 0,
+    luckyDrops: 0, maxMiningCombo: 0,
+  });
+
+  // ---- On-chain: Achievements ----
+  const [earnedAchievements, setEarnedAchievements] = useState<Set<string>>(new Set());
+  const earnedRef = useRef<Set<string>>(new Set());
+  const [achievementToast, setAchievementToast] = useState<{ id: string; name: string; description: string; icon: string } | null>(null);
+  const [achievementsOpen, setAchievementsOpen] = useState(false);
+
+  // ---- On-chain: Leaderboard ----
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [leaderboardData, setLeaderboardData] = useState<Array<{ rank: number; username: string; score: number; blocks_placed: number; mobs_killed: number; balance_tier: string }>>([]);
+
+  // ---- On-chain: Profile ----
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  // ---- On-chain: Land claims ----
+  const [tierPerksOpen, setTierPerksOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [landClaims, setLandClaims] = useState<Map<string, LandClaim>>(new Map());
+  const landClaimsRef = useRef<Map<string, LandClaim>>(new Map());
+  const [landClaimOpen, setLandClaimOpen] = useState(false);
+
   // ---- Inventory screen ----
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const inventoryOpenRef = useRef(false);
   useEffect(() => { inventoryOpenRef.current = inventoryOpen; }, [inventoryOpen]);
+
+  // ---- Death screen ----
+  const [isDead, setIsDead] = useState(false);
 
   // ---- Chat ----
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
@@ -103,7 +222,53 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
   const [muted, setMuted] = useState(false);
   const [fps, setFps] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [killFeed, setKillFeed] = useState<Array<{ id: number; text: string; ts: number }>>([]);
   const [invulnerable, setInvulnerable] = useState(false);
+
+  // ---- Weather system ----
+  const [weatherType, setWeatherType] = useState<'clear' | 'rain' | 'thunder'>('clear');
+  const [showMinimap, setShowMinimap] = useState(true);
+  // ---- Bed spawn point ----
+  const spawnPointRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  // ---- Compass ----
+  const [hasCompass, setHasCompass] = useState(false);
+  // ---- Fishing cooldown ----
+  const fishingCooldownRef = useRef(0);
+  const weatherRef = useRef<'clear' | 'rain' | 'thunder'>('clear');
+  // ---- Potion effects ----
+  const [activePotion, setActivePotion] = useState<string | null>(null);
+  const potionTimerRef = useRef(0);
+  const potionTypeRef = useRef<string | null>(null);
+  // ---- Door states (open/closed) ----
+  const openDoorsRef = useRef<Set<string>>(new Set());
+  // ---- Spyglass zoom ----
+  const [spyglassActive, setSpyglassActive] = useState(false);
+  const spyglassRef = useRef(false);
+  // ---- Sign text storage ----
+  const signTextsRef = useRef<Map<string, string>>(new Map());
+  // ---- Noteblock pitch ----
+  const noteblockPitchRef = useRef<Map<string, number>>(new Map());
+  // ---- Lever states (on/off) ----
+  const leverStatesRef = useRef<Set<string>>(new Set());
+  // ---- Enchantment tracking ----
+  const enchantedItemsRef = useRef<Map<number, string>>(new Map()); // slot → enchantment name
+  // ---- On-chain: wallet reward timer ----
+  const lastWalletRewardRef = useRef(0);
+  // ---- Beacon active buffs ----
+  const beaconBuffsRef = useRef<{ speed: number; regen: number; strength: number }>({ speed: 0, regen: 0, strength: 0 });
+  // ---- Ender pearl cooldown ----
+  const enderPearlCdRef = useRef(0);
+  // ---- Visual overlays ----
+  const [damageFlash, setDamageFlash] = useState(0); // 0..1 opacity
+  const [isUnderwater, setIsUnderwater] = useState(false);
+  const damageFlashRef = useRef(0);
+  // ---- Biome detection ----
+  const [currentBiome, setCurrentBiome] = useState<string>('Plains');
+  const currentBiomeRef = useRef('Plains');
+  // ---- Mining combo display ----
+  const [miningComboDisplay, setMiningComboDisplay] = useState(0);
+  // ---- Beacon active state ----
+  const [beaconActive, setBeaconActive] = useState(false);
 
   function appendChat(msg: Omit<ChatMsg, 'id' | 'ts'> & { ts?: number }) {
     setChatMessages((prev) => {
@@ -122,11 +287,23 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
   const handleCraft = useCallback((recipe: Recipe) => {
     const inv = inventoryRef.current;
     if (!canCraft(inv, recipe)) return;
+    // On-chain check: wallet-exclusive blocks require sufficient tier
+    const resultDef = ITEMS[recipe.result.item];
+    if (resultDef.walletExclusive) {
+      const requiredTier = resultDef.requiredTier ?? 'base';
+      if (!canAccessBlock(recipe.result.item, balanceTier)) {
+        const info = getTierInfo(requiredTier as BalanceTier);
+        setToast(`⛓ Need ${info.label} tier to craft ${resultDef.label}!`);
+        setTimeout(() => setToast(null), 3000);
+        return;
+      }
+    }
     const next = craft(inv, recipe);
     inventoryRef.current = next;
     setInventory(next);
-    getAudio().playBlockPlace('planks'); // satisfying craft sound
-  }, []);
+    statsRef.current.itemsCrafted++;
+    getAudio().playBlockPlace('planks');
+  }, [balanceTier]);
 
   // Near crafting table? Check if any crafting_table block is within 4 blocks
   const worldRef = useRef<WorldRenderer | null>(null);
@@ -141,6 +318,24 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       for (let dy = -2; dy <= 2; dy++) {
         for (let dz = -4; dz <= 4; dz++) {
           if (w.getType(px + dx, py + dy, pz + dz) === 'crafting_table') return true;
+        }
+      }
+    }
+    return false;
+  }, []);
+
+  // Near furnace?
+  const nearFurnace = useCallback((): boolean => {
+    const w = worldRef.current;
+    const p = playerRef.current;
+    if (!w || !p) return false;
+    const px = Math.floor(p.position.x);
+    const py = Math.floor(p.position.y);
+    const pz = Math.floor(p.position.z);
+    for (let dx = -4; dx <= 4; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dz = -4; dz <= 4; dz++) {
+          if (w.getType(px + dx, py + dy, pz + dz) === 'furnace') return true;
         }
       }
     }
@@ -402,6 +597,26 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     water.receiveShadow = true;
     scene.add(water);
 
+    // ---- Rain particles ----
+    const rainCount = 500;
+    const rainGeom = new THREE.BufferGeometry();
+    const rainPositions = new Float32Array(rainCount * 3);
+    for (let i = 0; i < rainCount; i++) {
+      rainPositions[i * 3 + 0] = (Math.random() - 0.5) * 80;
+      rainPositions[i * 3 + 1] = Math.random() * 40 + 10;
+      rainPositions[i * 3 + 2] = (Math.random() - 0.5) * 80;
+    }
+    rainGeom.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+    const rainMat = new THREE.PointsMaterial({
+      color: 0x9aaedd, size: 0.12, transparent: true, opacity: 0.6,
+      depthWrite: false, sizeAttenuation: true,
+    });
+    const rainMesh = new THREE.Points(rainGeom, rainMat);
+    rainMesh.visible = false;
+    scene.add(rainMesh);
+    let currentWeather: 'clear' | 'rain' | 'thunder' = 'clear';
+    let lightningFlashTimer = 0;
+
     // World + players + mobs
     const world = new WorldRenderer(scene);
     worldRef.current = world;
@@ -409,6 +624,23 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     const cows = new CowManager(scene, world);
     const pigs = new PigManager(scene, world);
     const chickens = new ChickenManager(scene, world);
+    const zombies = new ZombieManager(scene, world);
+    const skeletons = new SkeletonManager(scene, world);
+    const creepers = new CreeperManager(scene, world);
+    const spiders = new SpiderManager(scene, world);
+    const wolves = new WolfManager(scene, world);
+    const endermen = new EndermanManager(scene, world);
+    const ironGolems = new IronGolemManager(scene, world);
+    const slimes = new SlimeManager(scene, world);
+    const bats = new BatManager(scene, world);
+    const villagers = new VillagerManager(scene, world);
+    const witches = new WitchManager(scene, world);
+    const blazes = new BlazeManager(scene, world);
+    const phantoms = new PhantomManager(scene, world);
+    const foxes = new FoxManager(scene, world);
+    const ghasts = new GhastManager(scene, world);
+    const parrots = new ParrotManager(scene, world);
+    const turtles = new TurtleManager(scene, world);
     const flowers = new FlowerManager(scene);
     let worldSizeLocal = 128;
     let worldHeightLocal = 32;
@@ -421,21 +653,113 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     world.onBlockBroken = (x, y, z, type) => {
       const baseHex = BLOCKS[type].color;
       _particleColor.setHex(baseHex);
-      for (let i = 0; i < 6; i++) {
-        const mat = new THREE.MeshStandardMaterial({ color: _particleColor.clone(), roughness: 0.8, transparent: true, opacity: 1 });
-        const m = new THREE.Mesh(particleGeom, mat);
-        m.position.set(x + 0.3 + Math.random() * 0.4, y + 0.3 + Math.random() * 0.4, z + 0.3 + Math.random() * 0.4);
+      const count = 8 + Math.floor(Math.random() * 4); // 8-11 particles
+      for (let i = 0; i < count; i++) {
+        // Vary color slightly for each particle
+        const variedColor = _particleColor.clone();
+        variedColor.offsetHSL(0, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * 0.15);
+        const size = 0.08 + Math.random() * 0.12;
+        const geom = new THREE.BoxGeometry(size, size, size);
+        const mat = new THREE.MeshStandardMaterial({ color: variedColor, roughness: 0.8, transparent: true, opacity: 1 });
+        const m = new THREE.Mesh(geom, mat);
+        m.position.set(x + 0.2 + Math.random() * 0.6, y + 0.2 + Math.random() * 0.6, z + 0.2 + Math.random() * 0.6);
+        m.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
         m.castShadow = false;
         m.receiveShadow = false;
         scene.add(m);
         particles.push({
           mesh: m,
-          velocity: new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 3, (Math.random() - 0.5) * 4),
+          velocity: new THREE.Vector3(
+            (Math.random() - 0.5) * 5,
+            1.5 + Math.random() * 4,
+            (Math.random() - 0.5) * 5
+          ),
           age: 0,
-          life: 0.45,
+          life: 0.4 + Math.random() * 0.3,
         });
       }
     };
+
+    // ---- Place particles (subtle puff when a block is placed) ----
+    world.onBlockPlaced = (x, y, z, type) => {
+      const baseHex = BLOCKS[type].color;
+      _particleColor.setHex(baseHex);
+      for (let i = 0; i < 4; i++) {
+        const variedColor = _particleColor.clone();
+        variedColor.offsetHSL(0, 0, 0.15); // lighter puff
+        const mat = new THREE.MeshStandardMaterial({ color: variedColor, roughness: 0.8, transparent: true, opacity: 0.7 });
+        const m = new THREE.Mesh(particleGeom, mat);
+        m.position.set(x + 0.3 + Math.random() * 0.4, y + Math.random() * 0.3, z + 0.3 + Math.random() * 0.4);
+        m.castShadow = false;
+        m.receiveShadow = false;
+        scene.add(m);
+        particles.push({
+          mesh: m,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * 2, 0.5 + Math.random() * 1.5, (Math.random() - 0.5) * 2),
+          age: 0,
+          life: 0.3,
+        });
+      }
+    };
+
+    // ---- Torch particles ----
+    type TorchParticle = { mesh: THREE.Mesh; age: number; life: number; baseY: number };
+    const torchParticles: TorchParticle[] = [];
+    const torchParticleGeom = new THREE.BoxGeometry(0.06, 0.06, 0.06);
+    let lastTorchParticleSpawn = 0;
+
+    // ---- Dynamic torch point lights (max 4 nearest torches) ----
+    const MAX_TORCH_LIGHTS = 4;
+    const torchLights: THREE.PointLight[] = [];
+    for (let i = 0; i < MAX_TORCH_LIGHTS; i++) {
+      const tl = new THREE.PointLight(0xffaa44, 0, 6);
+      tl.castShadow = false;
+      scene.add(tl);
+      torchLights.push(tl);
+    }
+    let lastTorchLightUpdate = 0;
+
+    // ---- XP orbs ----
+    type XPOrb = { mesh: THREE.Mesh; velocity: THREE.Vector3; age: number; life: number };
+    const xpOrbs: XPOrb[] = [];
+    const xpOrbGeom = new THREE.SphereGeometry(0.08, 6, 6);
+    const xpOrbMat = new THREE.MeshStandardMaterial({ color: 0x88ff44, emissive: 0x44cc22, emissiveIntensity: 0.8, transparent: true });
+
+    function spawnXPOrbs(x: number, y: number, z: number, count: number) {
+      for (let i = 0; i < count; i++) {
+        const mat = xpOrbMat.clone();
+        const m = new THREE.Mesh(xpOrbGeom, mat);
+        m.position.set(x + 0.5, y + 0.5, z + 0.5);
+        m.castShadow = false;
+        scene.add(m);
+        xpOrbs.push({
+          mesh: m,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 2, (Math.random() - 0.5) * 2),
+          age: 0,
+          life: 1.2,
+        });
+      }
+    }
+
+    // ---- Tier aura particles ----
+    type AuraParticle = { mesh: THREE.Mesh; age: number; life: number; offset: THREE.Vector3; speed: number };
+    const auraParticles: AuraParticle[] = [];
+    const auraGeom = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+    const TIER_AURA_COLORS: Record<string, number> = {
+      none: 0x000000, base: 0x0052ff, bronze: 0xcd7f32, silver: 0xc0c0c0, gold: 0xffd700, diamond: 0x4de8e0,
+    };
+    let lastAuraSpawn = 0;
+
+    // ---- Block selection outline (wireframe cube showing targeted block) ----
+    const selectionGeom = new THREE.BoxGeometry(1.005, 1.005, 1.005);
+    const selectionEdges = new THREE.EdgesGeometry(selectionGeom);
+    const selectionLine = new THREE.LineSegments(
+      selectionEdges,
+      new THREE.LineBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.6, depthTest: true })
+    );
+    selectionLine.visible = false;
+    selectionLine.renderOrder = 999;
+    scene.add(selectionLine);
 
     // ---- Player ----
     const tempSpawn = { x: 64.5, y: 30, z: 64.5 };
@@ -466,7 +790,24 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       if (locked) audio.resume().catch(() => {});
     };
     player.onJump = () => audio.playJump();
-    player.onFootstep = () => audio.playFootstep();
+    player.onFootstep = () => {
+      // Terrain-aware footstep: detect block under feet
+      const fx = Math.floor(player.position.x);
+      const fy = Math.floor(player.position.y) - 1;
+      const fz = Math.floor(player.position.z);
+      const footBlock = world.getType(fx, fy, fz);
+      audio.playFootstep(footBlock ?? undefined);
+    };
+    // Q key: drop held item
+    player.onDropItem = () => {
+      const slot = inventoryRef.current[selectedRef.current];
+      if (!slot) return;
+      const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+      inventoryRef.current = nextInv;
+      setInventory(nextInv);
+      setToast(`Dropped ${ITEMS[slot.item].label}`);
+      setTimeout(() => setToast(null), 1500);
+    };
     player.onBreakProgress = (x, y, z, p) => {
       if (x === null || y === null || z === null) {
         cracksMesh.visible = false;
@@ -487,12 +828,40 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     };
     // Fall damage: reduce health
     player.onFallDamage = (dmg) => {
+      // Hay bale: 80% fall damage reduction (MC-style)
+      const px = Math.floor(player.position.x);
+      const py = Math.floor(player.position.y) - 1;
+      const pz = Math.floor(player.position.z);
+      const blockBelow = world.getType(px, py, pz);
+      const reducedDmg = blockBelow === 'hay_bale' ? Math.max(1, Math.floor(dmg * 0.2)) : dmg;
       const hp = healthRef.current;
-      const newHp = Math.max(0, hp - dmg);
+      const newHp = Math.max(0, hp - reducedDmg);
       healthRef.current = newHp;
       setHealth(newHp);
-      // Red flash could be added here
     };
+    // Void death: kill player if they fall into void
+    player.onVoidDeath = () => {
+      healthFloat = 0;
+      healthRef.current = 0;
+      setHealth(0);
+    };
+    // Drowning damage
+    player.onDrown = (dmg) => {
+      const reduced = applyArmorReduction(dmg, armorRef.current);
+      healthFloat = Math.max(0, healthFloat - reduced);
+      healthRef.current = Math.round(healthFloat);
+      setHealth(Math.round(healthFloat));
+    };
+    // Lava damage (blocked by fire resistance potion)
+    player.onLavaDamage = (dmg) => {
+      if (potionTypeRef.current === 'potion_fire_resist') return; // immune to lava
+      const reduced = applyArmorReduction(dmg, armorRef.current);
+      healthFloat = Math.max(0, healthFloat - reduced);
+      healthRef.current = Math.round(healthFloat);
+      setHealth(Math.round(healthFloat));
+      hurtFlashTimer = 0.3;
+    };
+
     // Tool-aware break speed: return the held item's ItemDef if it's a tool.
     player.getHeldToolDef = () => {
       const slot = inventoryRef.current[selectedRef.current];
@@ -556,6 +925,171 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       cows.spawn(6, 64, 64, 32);
       pigs.spawn(5, 64, 64, 36);
       chickens.spawn(7, 64, 64, 30);
+      wolves.spawn(3, 64, 64, 40);
+      ironGolems.spawn(1, 64, 64, 30);
+      bats.spawnBats(4, 64, 64, 40);
+      villagers.spawn(3, 64, 64, 25);
+      foxes.spawn(3, 64, 64, 35);
+      parrots.spawnFlying(4, 64, 64, 40);
+      turtles.spawn(3, 64, 64, 30);
+
+      // ---- Generate structures: small dungeons ----
+      const dungeonCount = 3 + Math.floor(Math.random() * 3);
+      for (let d = 0; d < dungeonCount; d++) {
+        const dx = 20 + Math.floor(Math.random() * 88);
+        const dz = 20 + Math.floor(Math.random() * 88);
+        const dy = 5 + Math.floor(Math.random() * 8); // underground
+        const size = 3 + Math.floor(Math.random() * 3); // 3-5 blocks wide
+        // Build walls of mossy cobblestone or stone bricks
+        const wallType: BlockType = Math.random() < 0.5 ? 'mossy_cobblestone' : 'stone_bricks';
+        for (let wx = -size; wx <= size; wx++) {
+          for (let wz = -size; wz <= size; wz++) {
+            // Floor
+            world.addBlock(dx + wx, dy - 1, dz + wz, wallType);
+            // Ceiling
+            world.addBlock(dx + wx, dy + 3, dz + wz, wallType);
+            // Walls
+            if (Math.abs(wx) === size || Math.abs(wz) === size) {
+              for (let wy = 0; wy < 3; wy++) {
+                world.addBlock(dx + wx, dy + wy, dz + wz, wallType);
+              }
+            }
+          }
+        }
+        // Place chest in center
+        world.addBlock(dx, dy, dz, 'chest');
+        // Place torches
+        world.addBlock(dx + size - 1, dy + 1, dz, 'torch');
+        world.addBlock(dx - size + 1, dy + 1, dz, 'torch');
+        // Spawn a spawner-like area (cobwebs = wool blocks)
+        if (Math.random() < 0.5) {
+          world.addBlock(dx, dy, dz + 1, 'cobblestone');
+        }
+      }
+
+      // ---- Generate structures: ocean ruins (prismarine) ----
+      const ruinCount = 2 + Math.floor(Math.random() * 2);
+      for (let r = 0; r < ruinCount; r++) {
+        const rx = 15 + Math.floor(Math.random() * 98);
+        const rz = 15 + Math.floor(Math.random() * 98);
+        const ry = 2 + Math.floor(Math.random() * 4);
+        const rSize = 2 + Math.floor(Math.random() * 3);
+        for (let wx = -rSize; wx <= rSize; wx++) {
+          for (let wz = -rSize; wz <= rSize; wz++) {
+            if (Math.abs(wx) === rSize || Math.abs(wz) === rSize) {
+              const height = 1 + Math.floor(Math.random() * 3); // ruins are partially broken
+              for (let wy = 0; wy < height; wy++) {
+                const blockType: BlockType = Math.random() < 0.3 ? 'sea_lantern' : 'prismarine';
+                world.addBlock(rx + wx, ry + wy, rz + wz, blockType);
+              }
+            }
+          }
+        }
+        // Place a chest with loot
+        world.addBlock(rx, ry, rz, 'chest');
+      }
+
+      // ---- Generate: Nether ruins (small nether brick structures for wallet users to find) ----
+      if (Math.random() < 0.5) {
+        const nx = 30 + Math.floor(Math.random() * 68);
+        const nz = 30 + Math.floor(Math.random() * 68);
+        const ny = 3 + Math.floor(Math.random() * 5);
+        // Small nether brick archway
+        for (let wy = 0; wy < 5; wy++) {
+          world.addBlock(nx - 2, ny + wy, nz, 'nether_bricks');
+          world.addBlock(nx + 2, ny + wy, nz, 'nether_bricks');
+        }
+        for (let wx = -2; wx <= 2; wx++) {
+          world.addBlock(nx + wx, ny + 4, nz, 'nether_bricks');
+        }
+        // Place a nether portal in center (tier-gated)
+        world.addBlock(nx, ny + 1, nz, 'glowstone');
+        world.addBlock(nx, ny + 2, nz, 'soul_sand');
+        world.addBlock(nx, ny + 3, nz, 'glowstone');
+      }
+
+      // ---- Generate: Watchtowers (tall stone brick structures) ----
+      const towerCount = 1 + Math.floor(Math.random() * 2);
+      for (let t = 0; t < towerCount; t++) {
+        const tx = 25 + Math.floor(Math.random() * 78);
+        const tz = 25 + Math.floor(Math.random() * 78);
+        // Find ground level
+        let tGround = 20;
+        for (let sy = 40; sy >= 0; sy--) {
+          const bt = world.getType(tx, sy, tz);
+          if (bt && bt !== 'water' && bt !== 'leaves') { tGround = sy + 1; break; }
+        }
+        const towerHeight = 8 + Math.floor(Math.random() * 5); // 8-12 blocks tall
+        // Build 3x3 tower
+        for (let wy = 0; wy < towerHeight; wy++) {
+          for (let wx = -1; wx <= 1; wx++) {
+            for (let wz = -1; wz <= 1; wz++) {
+              if (wx === 0 && wz === 0 && wy > 0 && wy < towerHeight - 1) continue; // hollow inside
+              world.addBlock(tx + wx, tGround + wy, tz + wz, 'stone_bricks');
+            }
+          }
+        }
+        // Platform on top (5x5)
+        for (let wx = -2; wx <= 2; wx++) {
+          for (let wz = -2; wz <= 2; wz++) {
+            world.addBlock(tx + wx, tGround + towerHeight, tz + wz, 'stone_bricks');
+          }
+        }
+        // Crenellations (battlements)
+        for (let wx = -2; wx <= 2; wx++) {
+          for (let wz = -2; wz <= 2; wz++) {
+            if (Math.abs(wx) === 2 || Math.abs(wz) === 2) {
+              if ((wx + wz) % 2 === 0) {
+                world.addBlock(tx + wx, tGround + towerHeight + 1, tz + wz, 'stone_bricks');
+              }
+            }
+          }
+        }
+        // Torch on top
+        world.addBlock(tx, tGround + towerHeight + 1, tz, 'torch');
+        // Ladder inside
+        for (let ly = 0; ly < towerHeight; ly++) {
+          world.addBlock(tx + 1, tGround + ly, tz, 'ladder');
+        }
+        // Chest with loot at top
+        world.addBlock(tx - 1, tGround + towerHeight, tz, 'chest');
+      }
+
+      // ---- On-chain: Wallet starter kit (one-time bonus) ----
+      if (walletAddress) {
+        const starterKey = `bc_starter_${walletAddress.toLowerCase()}`;
+        if (!window.localStorage.getItem(starterKey)) {
+          window.localStorage.setItem(starterKey, '1');
+          let sInv = inventoryRef.current;
+          // Give starter items based on tier
+          sInv = addItem(sInv, 'iron_pickaxe', 1);
+          sInv = addItem(sInv, 'iron_sword', 1);
+          sInv = addItem(sInv, 'torch', 16);
+          sInv = addItem(sInv, 'bread', 8);
+          sInv = addItem(sInv, 'cobblestone', 32);
+          if (balanceTier === 'bronze' || balanceTier === 'silver' || balanceTier === 'gold' || balanceTier === 'diamond') {
+            sInv = addItem(sInv, 'diamond', 3);
+            sInv = addItem(sInv, 'iron_ingot', 16);
+          }
+          if (balanceTier === 'gold' || balanceTier === 'diamond') {
+            sInv = addItem(sInv, 'diamond_pickaxe', 1);
+            sInv = addItem(sInv, 'golden_apple', 3);
+            sInv = addItem(sInv, 'ender_pearl', 2);
+          }
+          if (balanceTier === 'diamond') {
+            sInv = addItem(sInv, 'diamond_chestplate', 1);
+            sInv = addItem(sInv, 'diamond_sword', 1);
+            sInv = addItem(sInv, 'enchanted_book', 1);
+          }
+          inventoryRef.current = sInv;
+          setInventory(sInv);
+          appendChat({
+            username: 'system',
+            message: `⛓️ Welcome, ${tierInfo.label} tier holder! Starter kit received.`,
+            isSystem: true,
+          });
+        }
+      }
     };
 
     const onPlayerJoined = (p: { id: string; username: string; color: string; x: number; y: number; z: number }) => {
@@ -585,8 +1119,21 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         }
       }
     };
-    const onChatReceived = (m: { username: string; message: string; isSystem?: boolean }) => {
-      appendChat({ username: m.username, message: m.message, isSystem: m.isSystem });
+    const onChatReceived = (m: { username: string; message: string; isSystem?: boolean; tier?: string; tierColor?: string }) => {
+      // Color current player's name with their tier color
+      const isMe = m.username === username;
+      const nameColor = isMe ? tierInfo.color || '#59a5ff' : (m.tierColor || undefined);
+      // Tier badge for wallet holders
+      let tierBadge: string | undefined;
+      let tierBadgeColor: string | undefined;
+      if (isMe && balanceTier !== 'none') {
+        tierBadge = tierInfo.label.toUpperCase();
+        tierBadgeColor = tierInfo.color;
+      } else if (m.tier && m.tier !== 'none') {
+        tierBadge = m.tier.toUpperCase();
+        tierBadgeColor = m.tierColor;
+      }
+      appendChat({ username: m.username, message: m.message, isSystem: m.isSystem, nameColor, tierBadge, tierBadgeColor });
     };
     const onChatHistory = (msgs: Array<{ username: string; message: string; created_at?: string }>) => {
       const converted: ChatMsg[] = msgs.map((m) => ({
@@ -626,10 +1173,86 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     socket.on('player:teleport', onTeleport);
     socket.on('chat:welcome', onWelcome);
 
+    // ---- On-chain socket events ----
+    const onLeaderboardData = (entries: any[]) => setLeaderboardData(entries);
+    const onAchievementData = (data: Array<{ achievement_id: string }>) => {
+      const set = new Set(data.map(a => a.achievement_id));
+      earnedRef.current = set;
+      setEarnedAchievements(set);
+    };
+    const onLandData = (data: Array<{ chunk_x: number; chunk_z: number; wallet_address: string; username: string; claimed_at: string }>) => {
+      const map = new Map<string, LandClaim>();
+      for (const c of data) map.set(chunkKey(c.chunk_x, c.chunk_z), c);
+      landClaimsRef.current = map;
+      setLandClaims(map);
+    };
+    const onLandClaimed = (p: { chunkX: number; chunkZ: number; walletAddress: string; username: string }) => {
+      const claim: LandClaim = { chunk_x: p.chunkX, chunk_z: p.chunkZ, wallet_address: p.walletAddress, username: p.username, claimed_at: new Date().toISOString() };
+      const next = new Map(landClaimsRef.current);
+      next.set(chunkKey(p.chunkX, p.chunkZ), claim);
+      landClaimsRef.current = next;
+      setLandClaims(next);
+    };
+    const onLandUnclaimed = (p: { chunkX: number; chunkZ: number }) => {
+      const next = new Map(landClaimsRef.current);
+      next.delete(chunkKey(p.chunkX, p.chunkZ));
+      landClaimsRef.current = next;
+      setLandClaims(next);
+    };
+    // Command-triggered panel opens
+    const onProfileOpen = () => setProfileOpen(true);
+    const onLeaderboardOpen = () => { socket.emit('leaderboard:get'); setLeaderboardOpen(true); };
+    const onAchievementsOpen = () => setAchievementsOpen(true);
+    const onLandDoClaim = (p: { chunkX: number; chunkZ: number }) => socket.emit('land:claim', p);
+    const onLandDoUnclaim = (p: { chunkX: number; chunkZ: number }) => socket.emit('land:unclaim', p);
+
+    socket.on('leaderboard:data', onLeaderboardData);
+    socket.on('achievement:data', onAchievementData);
+    socket.on('land:data', onLandData);
+    socket.on('land:claimed', onLandClaimed);
+    socket.on('land:unclaimed', onLandUnclaimed);
+    socket.on('profile:open', onProfileOpen);
+    socket.on('leaderboard:open', onLeaderboardOpen);
+    socket.on('achievements:open', onAchievementsOpen);
+    socket.on('land:do_claim', onLandDoClaim);
+    socket.on('land:do_unclaim', onLandDoUnclaim);
+
     if (socket.connected) onConnect();
     else socket.connect();
 
+    // Request achievements on connect
+    setTimeout(() => { socket.emit('achievement:list'); }, 2000);
+
     const refreshInterval = setInterval(refreshOnlineList, 1000);
+
+    // ---- Stats flush every 60 seconds ----
+    const statsFlushInterval = setInterval(() => {
+      const s = statsRef.current;
+      if (s.blocksPlaced > 0 || s.blocksBroken > 0 || s.mobsKilled > 0 || s.deaths > 0) {
+        socket.emit('player:stats', {
+          blocksPlaced: s.blocksPlaced,
+          blocksBroken: s.blocksBroken,
+          mobsKilled: s.mobsKilled,
+          deaths: s.deaths,
+          playTime: Math.floor(s.playTimeSeconds),
+        });
+      }
+    }, 60000);
+
+    // ---- Achievement checker every 10 seconds ----
+    const achievementCheckInterval = setInterval(() => {
+      const newAchs = checkNewAchievements(statsRef.current, earnedRef.current);
+      for (const achId of newAchs) {
+        earnedRef.current = new Set([...earnedRef.current, achId]);
+        setEarnedAchievements(new Set(earnedRef.current));
+        socket.emit('achievement:unlock', { achievementId: achId });
+        const def = getAchievementDef(achId);
+        if (def) {
+          setAchievementToast({ id: achId, name: def.name, description: def.description, icon: def.icon });
+          setTimeout(() => setAchievementToast(null), 5000);
+        }
+      }
+    }, 10000);
 
     // ---- Player callbacks ----
     let lastMoveSent = 0;
@@ -643,15 +1266,87 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     };
 
     player.onBreak = (x, y, z) => {
+      // Land claim check
+      const landCheck = canModifyBlock(x, z, walletAddress, landClaimsRef.current);
+      if (!landCheck.allowed) {
+        setToast(`⛳ This land is claimed by ${landCheck.owner}!`);
+        setTimeout(() => setToast(null), 2000);
+        return;
+      }
       const t = world.getType(x, y, z);
       if (t) {
         audio.playBlockBreak(t);
         world.removeBlock(x, y, z, true);
+        // Stats tracking
+        statsRef.current.blocksBroken++;
+        if (t === 'diamond_ore') statsRef.current.diamondsFound++;
+        if (t === 'copper_ore') statsRef.current.copperMined++;
+        if (t === 'amethyst') statsRef.current.amethystMined++;
         // Drop item (stone → cobblestone, grass → dirt, etc.)
         const drop = getBlockDrop(t);
-        const nextInv = addItem(inventoryRef.current, drop, 1);
+        let nextInv = addItem(inventoryRef.current, drop, 1);
+        // Rare apple drop from leaves (~10% chance)
+        if (t === 'leaves' && Math.random() < 0.1) {
+          nextInv = addItem(nextInv, 'apple', 1);
+        }
+        // Wheat drops seeds + wheat_item
+        if (t === 'wheat') {
+          nextInv = addItem(nextInv, 'seeds', 1 + Math.floor(Math.random() * 2));
+        }
+        // Lucky mining: tier-boosted chance for bonus drops
+        const luckyChance = TIER_LUCKY_MINING[balanceTier];
+        if (Math.random() < luckyChance) {
+          const luckyDrops: { item: ItemType; weight: number }[] = [
+            { item: 'coal', weight: 30 },
+            { item: 'raw_iron', weight: 20 },
+            { item: 'raw_copper', weight: 15 },
+            { item: 'raw_gold', weight: 10 },
+            { item: 'diamond', weight: 3 },
+            { item: 'emerald', weight: 5 },
+            { item: 'amethyst_shard', weight: 8 },
+            { item: 'golden_apple', weight: 1 },
+            { item: 'ender_pearl', weight: 2 },
+          ];
+          const totalWeight = luckyDrops.reduce((s, d) => s + d.weight, 0);
+          let roll = Math.random() * totalWeight;
+          let luckyItem: ItemType = 'coal';
+          for (const ld of luckyDrops) {
+            roll -= ld.weight;
+            if (roll <= 0) { luckyItem = ld.item; break; }
+          }
+          nextInv = addItem(nextInv, luckyItem, 1);
+          const luckyLabel = ITEMS[luckyItem].label;
+          setToast(`🍀 Lucky find! +1 ${luckyLabel}`);
+          setTimeout(() => setToast(null), 2000);
+          statsRef.current.luckyDrops++;
+          // Spawn extra XP orbs for lucky find
+          spawnXPOrbs(x, y, z, 3);
+        }
         inventoryRef.current = nextInv;
         setInventory(nextInv);
+        // Mining combo: consecutive blocks within 3s get bonus XP
+        miningCombo++;
+        miningComboTimer = 3.0; // 3 second window
+        const comboMultiplier = Math.min(1 + miningCombo * 0.1, 3.0); // max 3x from combo
+        // XP gain from mining + XP orbs (tier multiplier applied)
+        const baseXp = BLOCK_XP[t] ?? 0;
+        // Thunderstorm bonus: 2x XP for wallet holders during storms
+        const stormBonus = (weatherRef.current === 'thunder' && walletAddress) ? 2 : 1;
+        const xpGain = Math.round(baseXp * TIER_XP_MULTIPLIER[balanceTier] * stormBonus * comboMultiplier);
+        if (xpGain > 0) {
+          const newXp = totalXpRef.current + xpGain;
+          totalXpRef.current = newXp;
+          setTotalXp(newXp);
+          spawnXPOrbs(x, y, z, Math.min(xpGain, 5));
+        }
+        // Track max combo
+        if (miningCombo > statsRef.current.maxMiningCombo) {
+          statsRef.current.maxMiningCombo = miningCombo;
+        }
+        // Show combo streak for 5+ blocks
+        if (miningCombo >= 5) {
+          setToast(`⛏️ Mining streak x${miningCombo}! (${comboMultiplier.toFixed(1)}x XP)`);
+        }
         // Decrement tool durability if holding a tool
         const slot = inventoryRef.current[selectedRef.current];
         if (slot) {
@@ -661,7 +1356,6 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
             inventoryRef.current = afterTool;
             setInventory(afterTool);
             if (broke) {
-              // Tool broke sound — reuse break sound
               audio.playBlockBreak('royal_brick');
             }
           }
@@ -675,15 +1369,942 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       const slot = inventoryRef.current[selectedRef.current];
       if (!slot) return;
       const def = ITEMS[slot.item];
+
+      // Shield: right-click toggles blocking
+      if (def.isShield) {
+        const blocking = !isBlockingRef.current;
+        isBlockingRef.current = blocking;
+        setIsBlocking(blocking);
+        setToast(blocking ? '🛡 Blocking' : '🛡 Stopped blocking');
+        setTimeout(() => setToast(null), 1500);
+        return;
+      }
+
+      // Armor: right-click to equip
+      if (def.isArmor && def.armorSlot) {
+        const slotName = def.armorSlot as keyof ArmorSlots;
+        const currentArmor = { ...armorRef.current };
+        const oldPiece = currentArmor[slotName];
+        currentArmor[slotName] = { item: slot.item, count: 1 };
+        let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+        if (oldPiece) inv = addItem(inv, oldPiece.item, 1);
+        inventoryRef.current = inv;
+        setInventory(inv);
+        armorRef.current = currentArmor;
+        setArmor(currentArmor);
+        audio.playBlockPlace('iron_ore');
+        setToast(`Equipped ${def.label}`);
+        setTimeout(() => setToast(null), 2000);
+        return;
+      }
+
+      // Flint & Steel: ignite TNT
+      if (slot.item === 'flint_and_steel') {
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'tnt') {
+            // Explode TNT!
+            world.removeBlock(hit.x, hit.y, hit.z, true);
+            socket.emit('block:break', { x: hit.x, y: hit.y, z: hit.z });
+            // 4×4×4 explosion
+            const cx = hit.x, cy = hit.y, cz = hit.z;
+            for (let ddx = -2; ddx <= 2; ddx++) {
+              for (let ddy = -2; ddy <= 2; ddy++) {
+                for (let ddz = -2; ddz <= 2; ddz++) {
+                  if (ddx * ddx + ddy * ddy + ddz * ddz > 6) continue; // spherical
+                  const bx = cx + ddx, by = cy + ddy, bz = cz + ddz;
+                  const bt2 = world.getType(bx, by, bz);
+                  if (bt2 && bt2 !== 'bedrock' && bt2 !== 'obsidian') {
+                    world.removeBlock(bx, by, bz, true);
+                    socket.emit('block:break', { x: bx, y: by, z: bz });
+                    // Chain reaction: nearby TNT
+                    if (bt2 === 'tnt') {
+                      for (let cx2 = -2; cx2 <= 2; cx2++) {
+                        for (let cy2 = -2; cy2 <= 2; cy2++) {
+                          for (let cz2 = -2; cz2 <= 2; cz2++) {
+                            const bt3 = world.getType(bx + cx2, by + cy2, bz + cz2);
+                            if (bt3 && bt3 !== 'bedrock' && bt3 !== 'obsidian') {
+                              world.removeBlock(bx + cx2, by + cy2, bz + cz2, true);
+                              socket.emit('block:break', { x: bx + cx2, y: by + cy2, z: bz + cz2 });
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            // Damage player if close
+            const pdx = player.position.x - cx;
+            const pdy = player.position.y - cy;
+            const pdz = player.position.z - cz;
+            const pdist = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
+            if (pdist < 5) {
+              const dmg = Math.floor(12 * (1 - pdist / 5));
+              const reduced = applyArmorReduction(dmg, armorRef.current);
+              const newHp = Math.max(0, healthRef.current - reduced);
+              healthRef.current = Math.round(newHp);
+              setHealth(Math.round(newHp));
+            }
+            audio.playBlockBreak('cobblestone');
+            // Camera shake from explosion
+            cameraShakeTimer = 0.5;
+            cameraShakeIntensity = Math.max(0, 0.3 * (1 - pdist / 8));
+            // Explosion flash
+            hurtFlashTimer = 0.2;
+            // Spawn lots of explosion particles
+            for (let ep = 0; ep < 20; ep++) {
+              const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(Math.random() < 0.5 ? 0xff6600 : 0xffaa00), roughness: 1, transparent: true, opacity: 1 });
+              const m = new THREE.Mesh(particleGeom, mat);
+              m.position.set(cx + (Math.random() - 0.5) * 3, cy + (Math.random() - 0.5) * 3, cz + (Math.random() - 0.5) * 3);
+              m.castShadow = false;
+              m.receiveShadow = false;
+              scene.add(m);
+              particles.push({
+                mesh: m,
+                velocity: new THREE.Vector3((Math.random() - 0.5) * 8, 2 + Math.random() * 6, (Math.random() - 0.5) * 8),
+                age: 0,
+                life: 0.5 + Math.random() * 0.3,
+              });
+            }
+            // Use durability
+            const { inv: afterFS, broke: fsBroke } = useTool(inventoryRef.current, selectedRef.current);
+            inventoryRef.current = afterFS;
+            setInventory(afterFS);
+            if (fsBroke) audio.playBlockBreak('royal_brick');
+            handSwingTime = 0;
+            return;
+          }
+        }
+        // Flint & steel on non-TNT: just use durability
+        const { inv: afterFS2 } = useTool(inventoryRef.current, selectedRef.current);
+        inventoryRef.current = afterFS2;
+        setInventory(afterFS2);
+        return;
+      }
+
+      // Bed: right-click to set spawn point or skip night
+      if (slot.item === 'bed' && def.isBlock) {
+        // Check if there's already a bed below — if clicking bed block, use it
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'bed') {
+            spawnPointRef.current = { x: hit.x + 0.5, y: hit.y + 1, z: hit.z + 0.5 };
+            setToast('🛏️ Spawn point set!');
+            setTimeout(() => setToast(null), 2000);
+            return;
+          }
+        }
+        // Otherwise place the bed
+      }
+
+      // Bucket: right-click water → water_bucket, right-click lava → lava_bucket
+      if (slot.item === 'bucket') {
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'water') {
+            // Pick up placed water block
+            world.removeBlock(hit.x, hit.y, hit.z, true);
+            socket.emit('block:break', { x: hit.x, y: hit.y, z: hit.z });
+            let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+            inv = addItem(inv, 'water_bucket', 1);
+            inventoryRef.current = inv;
+            setInventory(inv);
+            setToast('Scooped water!');
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+          if (bt === 'lava') {
+            world.removeBlock(hit.x, hit.y, hit.z, true);
+            socket.emit('block:break', { x: hit.x, y: hit.y, z: hit.z });
+            let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+            inv = addItem(inv, 'lava_bucket', 1);
+            inventoryRef.current = inv;
+            setInventory(inv);
+            setToast('Scooped lava!');
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+        }
+        // Fallback: scoop water if near sea level
+        if (player.position.y < SEA_LEVEL + 0.5) {
+          let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+          inv = addItem(inv, 'water_bucket', 1);
+          inventoryRef.current = inv;
+          setInventory(inv);
+          setToast('Scooped water!');
+          setTimeout(() => setToast(null), 1500);
+          return;
+        }
+        return;
+      }
+
+      // Water bucket: place water block at target position
+      if (slot.item === 'water_bucket') {
+        const type = 'water' as BlockType;
+        world.addBlock(x, y, z, type, true);
+        socket.emit('block:place', { x, y, z, type });
+        let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+        inv = addItem(inv, 'bucket', 1);
+        inventoryRef.current = inv;
+        setInventory(inv);
+        audio.playBlockPlace(type);
+        handSwingTime = 0;
+        setToast('Placed water');
+        setTimeout(() => setToast(null), 1500);
+        return;
+      }
+
+      // Lava bucket: place lava block
+      if (slot.item === 'lava_bucket') {
+        const type = 'lava' as BlockType;
+        world.addBlock(x, y, z, type, true);
+        socket.emit('block:place', { x, y, z, type });
+        let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+        inv = addItem(inv, 'bucket', 1);
+        inventoryRef.current = inv;
+        setInventory(inv);
+        audio.playBlockPlace(type);
+        handSwingTime = 0;
+        return;
+      }
+
+      // Hoe: right-click grass/dirt → farmland
+      if (def.isTool && def.toolKind === 'hoe') {
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'base_blue' || bt === 'deep_blue') {
+            world.removeBlock(hit.x, hit.y, hit.z, true);
+            world.addBlock(hit.x, hit.y, hit.z, 'farmland', true);
+            socket.emit('block:break', { x: hit.x, y: hit.y, z: hit.z });
+            socket.emit('block:place', { x: hit.x, y: hit.y, z: hit.z, type: 'farmland' });
+            audio.playBlockBreak('deep_blue');
+            // Use durability
+            const { inv: afterHoe, broke } = useTool(inventoryRef.current, selectedRef.current);
+            inventoryRef.current = afterHoe;
+            setInventory(afterHoe);
+            if (broke) audio.playBlockBreak('royal_brick');
+            // Drop seeds from tilling (~30% chance)
+            if (Math.random() < 0.3) {
+              let inv = addItem(inventoryRef.current, 'seeds', 1);
+              inventoryRef.current = inv;
+              setInventory(inv);
+            }
+            handSwingTime = 0;
+            return;
+          }
+        }
+        return;
+      }
+
+      // Seeds: right-click farmland → plant wheat
+      if (slot.item === 'seeds') {
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'farmland' && !world.has(hit.x, hit.y + 1, hit.z)) {
+            world.addBlock(hit.x, hit.y + 1, hit.z, 'wheat', true);
+            socket.emit('block:place', { x: hit.x, y: hit.y + 1, z: hit.z, type: 'wheat' });
+            const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+            inventoryRef.current = nextInv;
+            setInventory(nextInv);
+            audio.playBlockPlace('base_blue');
+            setToast('🌱 Planted wheat!');
+            setTimeout(() => setToast(null), 1500);
+            handSwingTime = 0;
+            return;
+          }
+        }
+        return;
+      }
+
+      // Fishing rod: right-click near water → catch fish
+      if (slot.item === 'fishing_rod') {
+        if (player.isInWater() || player.position.y < SEA_LEVEL + 2) {
+          if (fishingCooldownRef.current <= 0) {
+            fishingCooldownRef.current = 3; // 3 second cooldown
+            // Enhanced fishing loot table (MC-style: fish/junk/treasure)
+            const roll = Math.random();
+            const tierBonus = TIER_XP_MULTIPLIER[balanceTier] > 1 ? 0.05 : 0; // tier gives better odds
+            let catchItem: ItemType;
+            let catchCount = 1;
+            let catchMsg = '';
+            if (roll < 0.45) {
+              catchItem = 'raw_fish'; catchMsg = '🐟 Caught a fish!';
+            } else if (roll < 0.65) {
+              catchItem = 'raw_fish'; catchCount = 2; catchMsg = '🐟 Great catch! x2';
+            } else if (roll < 0.72) {
+              catchItem = 'string'; catchMsg = '🧵 Caught string...';
+            } else if (roll < 0.78) {
+              catchItem = 'bone'; catchMsg = '🦴 Caught a bone...';
+            } else if (roll < 0.83) {
+              catchItem = 'leather'; catchMsg = '🥾 Caught leather boots... wait, leather!';
+            } else if (roll < 0.87) {
+              catchItem = 'iron_ingot'; catchMsg = '🔩 Treasure! Iron Ingot';
+            } else if (roll < 0.90 + tierBonus) {
+              catchItem = 'prismarine_shard'; catchMsg = '🔷 Treasure! Prismarine Shard';
+            } else if (roll < 0.93 + tierBonus) {
+              catchItem = 'gold_ingot'; catchMsg = '✨ Treasure! Gold Ingot';
+            } else if (roll < 0.96 + tierBonus) {
+              catchItem = 'enchanted_book'; catchMsg = '📕 Treasure! Enchanted Book';
+            } else if (roll < 0.98 + tierBonus) {
+              catchItem = 'emerald'; catchMsg = '💚 Treasure! Emerald';
+            } else {
+              catchItem = 'diamond'; catchMsg = '💎 Legendary catch! Diamond!';
+            }
+            let inv = addItem(inventoryRef.current, catchItem, catchCount);
+            inventoryRef.current = inv;
+            setInventory(inv);
+            setToast(catchMsg);
+            setTimeout(() => setToast(null), 2000);
+            const { inv: afterFish, broke } = useTool(inventoryRef.current, selectedRef.current);
+            inventoryRef.current = afterFish;
+            setInventory(afterFish);
+            if (broke) audio.playBlockBreak('royal_brick');
+            audio.playBlockPlace('sand_blue');
+            handSwingTime = 0;
+            const newXp = totalXpRef.current + 3;
+            totalXpRef.current = newXp;
+            setTotalXp(newXp);
+          } else {
+            setToast('🎣 Wait a moment...');
+            setTimeout(() => setToast(null), 1000);
+          }
+        } else {
+          setToast('🎣 Need to be near water!');
+          setTimeout(() => setToast(null), 1500);
+        }
+        return;
+      }
+
+      // Wolf taming: right-click wild wolf with bone
+      if (slot.item === 'bone') {
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        const origin = camera.position.clone();
+        const mob = wolves.hitTest(origin, camDir, 4);
+        if (mob && !wolves.isTamed(mob)) {
+          if (Math.random() < 0.33) {
+            wolves.tame(mob);
+            setToast('🐺 Wolf tamed!');
+          } else {
+            setToast('🐺 Wolf not interested...');
+          }
+          setTimeout(() => setToast(null), 2000);
+          const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+          inventoryRef.current = nextInv;
+          setInventory(nextInv);
+          handSwingTime = 0;
+          return;
+        }
+        // Right-click tamed wolf → sit/stand
+        if (mob && wolves.isTamed(mob)) {
+          wolves.toggleSit(mob);
+          const isSitting = wolves.sittingWolves.has(mob);
+          setToast(isSitting ? '🐺 Wolf sitting' : '🐺 Wolf following');
+          setTimeout(() => setToast(null), 1500);
+          return;
+        }
+      }
+
+      // Bow: shoot arrow
+      if (def.isRanged && def.ammoType) {
+        // Check for arrow ammo
+        const ammoIdx = inventoryRef.current.findIndex(s => s && s.item === def.ammoType);
+        if (ammoIdx === -1) {
+          setToast('No arrows!');
+          setTimeout(() => setToast(null), 1500);
+          return;
+        }
+        // Consume arrow
+        let inv = removeFromSlot(inventoryRef.current, ammoIdx, 1);
+        inventoryRef.current = inv;
+        setInventory(inv);
+        // Fire at mobs
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        const origin = camera.position.clone();
+        const arrowDamage = def.projectileDamage ?? 6;
+        const managers = [cows, pigs, chickens, zombies, skeletons, creepers, spiders, wolves, endermen, ironGolems, slimes, bats, villagers, witches, blazes, phantoms, foxes, ghasts, parrots, turtles];
+        for (const mgr of managers) {
+          const mob = mgr.hitTest(origin, camDir, 24);
+          if (mob) {
+            const drops = mgr.dealDamage(mob, arrowDamage);
+            audio.playBlockBreak('royal_brick');
+            if (drops) {
+              let invAfter = inventoryRef.current;
+              for (const drop of drops) invAfter = addItem(invAfter, drop.item, drop.count);
+              inventoryRef.current = invAfter;
+              setInventory(invAfter);
+              const newXp = totalXpRef.current + 5;
+              totalXpRef.current = newXp;
+              setTotalXp(newXp);
+            }
+            break;
+          }
+        }
+        // Durability on bow
+        const { inv: afterBow, broke } = useTool(inventoryRef.current, selectedRef.current);
+        inventoryRef.current = afterBow;
+        setInventory(afterBow);
+        if (broke) audio.playBlockBreak('royal_brick');
+        audio.playJump(); // arrow swoosh
+        handSwingTime = 0;
+        return;
+      }
+
+      // Food: eat instead of place
+      if (def.isFood && def.foodRestore) {
+        if (hungerRef.current < MAX_HUNGER) {
+          const newHunger = Math.min(MAX_HUNGER, hungerRef.current + def.foodRestore);
+          hungerRef.current = newHunger;
+          setHunger(newHunger);
+          const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+          inventoryRef.current = nextInv;
+          setInventory(nextInv);
+          audio.playBlockPlace('planks'); // eating sound
+          setToast(`Ate ${def.label} (+${def.foodRestore} hunger)`);
+          setTimeout(() => setToast(null), 2000);
+          // Golden apple: also restore health
+          if (slot.item === 'golden_apple') {
+            healthFloat = Math.min(MAX_HEALTH, healthFloat + 4);
+            healthRef.current = Math.round(healthFloat);
+            setHealth(Math.round(healthFloat));
+          }
+        }
+        return;
+      }
+
+      // Bed use: right-click on a placed bed to set spawn + skip night
+      {
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'bed') {
+            spawnPointRef.current = { x: hit.x + 0.5, y: hit.y + 1, z: hit.z + 0.5 };
+            // Actually skip night: advance elapsed to next dawn
+            const currentPhase = ((elapsedRef.current / DAY_LENGTH_SECONDS) + 0.25) % 1;
+            const isNight = currentPhase > 0.55 || currentPhase < 0.15;
+            if (isNight) {
+              // Skip to dawn (phase 0.15 which is early morning)
+              const targetPhase = 0.15;
+              const currentCycle = Math.floor((elapsedRef.current / DAY_LENGTH_SECONDS) + 0.25);
+              const nextDawn = (currentCycle + (currentPhase > 0.15 ? 1 : 0) + targetPhase - 0.25) * DAY_LENGTH_SECONDS;
+              const skip = nextDawn - elapsedRef.current;
+              if (skip > 0 && skip < DAY_LENGTH_SECONDS) {
+                elapsed += skip;
+                elapsedRef.current = elapsed;
+              }
+              setToast('🛏️ Spawn set! Good morning!');
+            } else {
+              setToast('🛏️ Spawn point set! (Can only sleep at night)');
+            }
+            setTimeout(() => setToast(null), 2500);
+            return;
+          }
+          // Door toggle: right-click to open/close
+          if (bt === 'oak_door' || bt === 'trapdoor') {
+            const key = `${hit.x},${hit.y},${hit.z}`;
+            if (openDoorsRef.current.has(key)) {
+              openDoorsRef.current.delete(key);
+              setToast('Door closed');
+            } else {
+              openDoorsRef.current.add(key);
+              setToast('Door opened');
+            }
+            audio.playBlockPlace(bt);
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+          // Noteblock: right-click to play note (pitch cycles)
+          if (bt === 'noteblock') {
+            const key = `${hit.x},${hit.y},${hit.z}`;
+            const pitch = (noteblockPitchRef.current.get(key) ?? 0) + 1;
+            noteblockPitchRef.current.set(key, pitch % 25);
+            // Play note using WebAudio
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.value = 220 * Math.pow(2, (pitch % 25) / 12);
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(); osc.stop(ctx.currentTime + 0.5);
+            setToast(`🎵 Note: ${pitch % 25}`);
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+          // Jukebox: play a random melody
+          if (bt === 'jukebox') {
+            const ctx = new AudioContext();
+            const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88];
+            for (let i = 0; i < 8; i++) {
+              const osc = ctx.createOscillator();
+              osc.type = 'sine';
+              osc.frequency.value = notes[Math.floor(Math.random() * notes.length)];
+              const gain = ctx.createGain();
+              gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.25);
+              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.25 + 0.2);
+              osc.connect(gain).connect(ctx.destination);
+              osc.start(ctx.currentTime + i * 0.25);
+              osc.stop(ctx.currentTime + i * 0.25 + 0.25);
+            }
+            setToast('🎶 Playing music...');
+            setTimeout(() => setToast(null), 2500);
+            return;
+          }
+          // Sign: right-click to read or set text
+          if (bt === 'sign') {
+            const key = `${hit.x},${hit.y},${hit.z}`;
+            const text = signTextsRef.current.get(key);
+            if (text) {
+              setToast(`📜 Sign: "${text}"`);
+            } else {
+              const newText = `${username}'s sign`;
+              signTextsRef.current.set(key, newText);
+              setToast(`📜 Sign placed: "${newText}"`);
+            }
+            setTimeout(() => setToast(null), 3000);
+            return;
+          }
+          // Brewing stand: shows brewing hint
+          if (bt === 'brewing_stand') {
+            setToast('🧪 Brewing Stand — craft potions at a crafting table with glass bottles');
+            setTimeout(() => setToast(null), 3000);
+            return;
+          }
+          // Lever: toggle on/off
+          if (bt === 'lever') {
+            const key = `${hit.x},${hit.y},${hit.z}`;
+            if (leverStatesRef.current.has(key)) {
+              leverStatesRef.current.delete(key);
+              setToast('⚡ Lever: OFF');
+            } else {
+              leverStatesRef.current.add(key);
+              setToast('⚡ Lever: ON');
+            }
+            audio.playBlockPlace('cobblestone');
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+          // Anvil: repair held tool
+          if (bt === 'anvil') {
+            const hSlot = inventoryRef.current[selectedRef.current];
+            if (hSlot) {
+              const hDef = ITEMS[hSlot.item];
+              if (hDef.isTool && hDef.durability && hSlot.durability !== undefined) {
+                const ironNeeded = 1;
+                const ironIdx = inventoryRef.current.findIndex(s => s && s.item === 'iron_ingot');
+                if (ironIdx !== -1) {
+                  let inv = removeFromSlot(inventoryRef.current, ironIdx, 1);
+                  // Restore 25% durability
+                  const restore = Math.floor(hDef.durability * 0.25);
+                  const slot = inv[selectedRef.current];
+                  if (slot && slot.durability !== undefined) {
+                    slot.durability = Math.min(hDef.durability, slot.durability + restore);
+                  }
+                  inventoryRef.current = inv;
+                  setInventory([...inv]);
+                  audio.playBlockBreak('iron_ore');
+                  setToast(`🔨 Repaired ${hDef.label} (+${restore} durability)`);
+                } else {
+                  setToast('🔨 Need Iron Ingot to repair');
+                }
+              } else {
+                setToast('🔨 Hold a tool to repair it');
+              }
+            } else {
+              setToast('🔨 Hold a tool to repair it');
+            }
+            setTimeout(() => setToast(null), 2500);
+            return;
+          }
+          // Enchanting Table: enchant held weapon/tool
+          if (bt === 'enchanting_table') {
+            const hSlot = inventoryRef.current[selectedRef.current];
+            if (hSlot) {
+              const hDef = ITEMS[hSlot.item];
+              if (hDef.isTool) {
+                // Need XP + lapis (diamond as substitute)
+                const xpCost = 10;
+                if (totalXpRef.current >= xpCost) {
+                  // Random enchantment (tier-exclusive max levels)
+                  const enchants = ['Sharpness', 'Efficiency', 'Unbreaking', 'Fortune', 'Power', 'Knockback'];
+                  const ench = enchants[Math.floor(Math.random() * enchants.length)];
+                  const maxLevel = TIER_MAX_ENCHANT[balanceTier];
+                  const level = 1 + Math.floor(Math.random() * Math.min(maxLevel, 7));
+                  const numLabels = ['I','II','III','IV','V','VI','VII'];
+                  enchantedItemsRef.current.set(selectedRef.current, `${ench} ${numLabels[level-1]}`);
+                  statsRef.current.itemsEnchanted++;
+                  // Deduct XP
+                  const newXp = totalXpRef.current - xpCost;
+                  totalXpRef.current = newXp;
+                  setTotalXp(newXp);
+                  // Boost the tool stats
+                  const inv = [...inventoryRef.current];
+                  const slot = inv[selectedRef.current];
+                  if (slot && slot.durability !== undefined) {
+                    if (ench === 'Unbreaking') slot.durability = Math.floor(slot.durability * (1 + level * 0.3));
+                  }
+                  inventoryRef.current = inv;
+                  setInventory(inv);
+                  audio.playBlockPlace('diamond_ore');
+                  setToast(`✨ Enchanted: ${ench} ${numLabels[level-1]}!`);
+                } else {
+                  setToast(`✨ Need ${xpCost} XP to enchant (have ${totalXpRef.current})`);
+                }
+              } else {
+                setToast('✨ Hold a tool or weapon to enchant');
+              }
+            } else {
+              setToast('✨ Hold a tool or weapon to enchant');
+            }
+            setTimeout(() => setToast(null), 3000);
+            return;
+          }
+        }
+      }
+
+      // Barrel / Redstone Lamp / Melon interactions
+      {
+        const hit = world.raycast(camera, 5);
+        if (hit) {
+          const bt = world.getType(hit.x, hit.y, hit.z);
+          if (bt === 'barrel') {
+            const key = `barrel_${hit.x},${hit.y},${hit.z}`;
+            if (!leverStatesRef.current.has(key)) {
+              leverStatesRef.current.add(key);
+              const lootTable: Array<{ item: ItemType; count: number; label: string }> = [
+                { item: 'iron_ingot', count: 2 + Math.floor(Math.random() * 3), label: 'Iron Ingots' },
+                { item: 'coal', count: 3 + Math.floor(Math.random() * 5), label: 'Coal' },
+                { item: 'bread', count: 2 + Math.floor(Math.random() * 3), label: 'Bread' },
+                { item: 'arrow', count: 5 + Math.floor(Math.random() * 10), label: 'Arrows' },
+                { item: 'string', count: 2 + Math.floor(Math.random() * 4), label: 'String' },
+                { item: 'emerald', count: 1 + Math.floor(Math.random() * 2), label: 'Emeralds' },
+              ];
+              const loot = lootTable[Math.floor(Math.random() * lootTable.length)];
+              let inv = inventoryRef.current;
+              inv = addItem(inv, loot.item, loot.count);
+              inventoryRef.current = inv;
+              setInventory(inv);
+              audio.playBlockPlace('chest');
+              setToast(`📦 Barrel: Found ${loot.count} ${loot.label}!`);
+              setTimeout(() => setToast(null), 2500);
+              return;
+            } else {
+              setToast('📦 This barrel is empty');
+              setTimeout(() => setToast(null), 1500);
+              return;
+            }
+          }
+          // Redstone Lamp: toggle emissive on/off
+          if (bt === 'redstone_lamp') {
+            audio.playBlockPlace('redstone_lamp');
+            setToast('💡 Redstone Lamp toggled!');
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+          // Melon: gives melon slices when right-clicked
+          if (bt === 'melon') {
+            let inv = inventoryRef.current;
+            const slices = 3 + Math.floor(Math.random() * 5);
+            inv = addItem(inv, 'melon_slice', slices);
+            inventoryRef.current = inv;
+            setInventory(inv);
+            world.removeBlock(hit.x, hit.y, hit.z, true);
+            audio.playBlockBreak('melon');
+            setToast(`🍉 Got ${slices} Melon Slices!`);
+            setTimeout(() => setToast(null), 2000);
+            return;
+          }
+        }
+      }
+
+      // Villager trading: right-click with emerald or bone etc
+      {
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        const origin = camera.position.clone();
+        const mob = villagers.hitTest(origin, camDir, 4);
+        if (mob) {
+          if (villagers.canTrade(mob)) {
+            // Trade offers based on what player holds
+            const tradeSlot = inventoryRef.current[selectedRef.current];
+            if (tradeSlot && tradeSlot.item === 'emerald' && tradeSlot.count >= 1) {
+              // Random trade: emerald → useful item
+              const trades: Array<{ item: ItemType; count: number; label: string }> = [
+                { item: 'diamond', count: 1, label: '💎 Diamond' },
+                { item: 'iron_ingot', count: 4, label: '🔩 4 Iron Ingots' },
+                { item: 'golden_apple', count: 1, label: '🍎 Golden Apple' },
+                { item: 'arrow', count: 16, label: '🏹 16 Arrows' },
+                { item: 'book', count: 3, label: '📖 3 Books' },
+                { item: 'bread', count: 6, label: '🍞 6 Bread' },
+                { item: 'enchanted_book', count: 1, label: '📕 Enchanted Book' },
+              ];
+              const trade = trades[Math.floor(Math.random() * trades.length)];
+              let inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+              inv = addItem(inv, trade.item, trade.count);
+              inventoryRef.current = inv;
+              setInventory(inv);
+              villagers.markTraded(mob);
+              statsRef.current.villagerTrades++;
+              audio.playBlockPlace('gold_ore');
+              setToast(`🤝 Traded: 1 Emerald → ${trade.label}`);
+              setTimeout(() => setToast(null), 2500);
+              return;
+            } else {
+              // Show trade hint
+              setToast('🏪 Villager — hold Emeralds to trade!');
+              setTimeout(() => setToast(null), 2500);
+              return;
+            }
+          } else {
+            setToast('🏪 Villager is resting...');
+            setTimeout(() => setToast(null), 1500);
+            return;
+          }
+        }
+      }
+
+      // Ender pearl teleport: right-click to throw
+      if (slot.item === 'ender_pearl') {
+        const now = performance.now();
+        if (now - enderPearlCdRef.current > 1000) { // 1s cooldown
+          enderPearlCdRef.current = now;
+          const dir = new THREE.Vector3();
+          camera.getWorldDirection(dir);
+          // Teleport 12 blocks in look direction
+          const dist = 12;
+          const newX = player.position.x + dir.x * dist;
+          const newY = player.position.y + dir.y * dist + 1;
+          const newZ = player.position.z + dir.z * dist;
+          player.position.set(newX, Math.max(2, newY), newZ);
+          // Use the pearl
+          const inv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+          inventoryRef.current = inv;
+          setInventory(inv);
+          statsRef.current.enderPearlsThrown++;
+          // Take 3 damage (MC-style)
+          healthRef.current = Math.max(0, healthRef.current - 3);
+          setHealth(healthRef.current);
+          audio.playBlockPlace('enchanting_table');
+          setToast('🌀 Teleported!');
+          setTimeout(() => setToast(null), 1500);
+          return;
+        }
+      }
+
+      // Map: show expanded minimap
+      if (slot.item === 'map') {
+        setToast('🗺️ Map — minimap expanded while held');
+        setTimeout(() => setToast(null), 2000);
+        return;
+      }
+
+      // Potion use: right-click to drink
+      if (slot.item.startsWith('potion_')) {
+        const potionType = slot.item as string;
+        let duration = 30; // seconds
+        let effectMsg = '';
+        switch (potionType) {
+          case 'potion_healing':
+            healthRef.current = Math.min(MAX_HEALTH, healthRef.current + 8);
+            setHealth(healthRef.current);
+            effectMsg = '❤️ Healed 4 hearts!';
+            duration = 0; // instant
+            break;
+          case 'potion_speed':
+            effectMsg = '💨 Speed Boost (30s)';
+            break;
+          case 'potion_strength':
+            effectMsg = '💪 Strength (30s)';
+            break;
+          case 'potion_fire_resist':
+            effectMsg = '🔥 Fire Resistance (30s)';
+            break;
+          case 'potion_night_vision':
+            effectMsg = '👁️ Night Vision (60s)';
+            duration = 60;
+            break;
+          case 'potion_jump':
+            effectMsg = '🦘 Jump Boost (30s)';
+            break;
+        }
+        if (duration > 0) {
+          potionTypeRef.current = potionType;
+          potionTimerRef.current = duration;
+          setActivePotion(potionType);
+        }
+        const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+        // Give back empty bottle
+        const bottleInv = addItem(nextInv, 'glass_bottle', 1);
+        inventoryRef.current = bottleInv;
+        setInventory(bottleInv);
+        setToast(effectMsg);
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
+      // Spyglass: right-click toggles zoom
+      if (slot.item === 'spyglass') {
+        spyglassRef.current = !spyglassRef.current;
+        setSpyglassActive(spyglassRef.current);
+        setToast(spyglassRef.current ? '🔭 Zoomed in' : '🔭 Zoom off');
+        setTimeout(() => setToast(null), 1500);
+        return;
+      }
+
+      // Breeding: right-click passive mob with bread or apple
+      if (slot.item === 'bread' || slot.item === 'apple') {
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        const origin = camera.position.clone();
+        const passiveMgrs = [cows, pigs, chickens];
+        for (const mgr of passiveMgrs) {
+          const mob = mgr.hitTest(origin, camDir, 4);
+          if (mob) {
+            // "Breed" — spawn a baby (just spawn 1 more near that mob)
+            const mx = mob.group.position.x + (Math.random() - 0.5) * 2;
+            const mz = mob.group.position.z + (Math.random() - 0.5) * 2;
+            mgr.spawn(1, Math.floor(mx), Math.floor(mz), 3);
+            const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
+            inventoryRef.current = nextInv;
+            setInventory(nextInv);
+            audio.playBlockPlace('base_blue');
+            setToast('♥ Bred animal!');
+            setTimeout(() => setToast(null), 2000);
+            return;
+          }
+        }
+      }
+
       if (!def.isBlock) return; // can't place tools
+      // Land claim check
+      const placeCheck = canModifyBlock(x, z, walletAddress, landClaimsRef.current);
+      if (!placeCheck.allowed) {
+        setToast(`⛳ This land is claimed by ${placeCheck.owner}!`);
+        setTimeout(() => setToast(null), 2000);
+        return;
+      }
+      // On-chain: tier-gated blocks
+      if (def.walletExclusive) {
+        if (!canAccessBlock(slot.item, balanceTier)) {
+          const requiredTier = def.requiredTier ?? 'base';
+          const info = getTierInfo(requiredTier as BalanceTier);
+          setToast(`⛓ Need ${info.label} tier to place ${def.label}!`);
+          setTimeout(() => setToast(null), 3000);
+          return;
+        }
+      }
       const type = slot.item as BlockType;
       const nextInv = removeFromSlot(inventoryRef.current, selectedRef.current, 1);
       inventoryRef.current = nextInv;
       setInventory(nextInv);
+      // Stats tracking
+      statsRef.current.blocksPlaced++;
+      if (type === 'beacon') statsRef.current.beaconsPlaced++;
       audio.playBlockPlace(type);
       world.addBlock(x, y, z, type, true);
       socket.emit('block:place', { x, y, z, type });
       handSwingTime = 0;
+    };
+
+    // ---- Mob attack (left click with sword) ----
+    const tryAttackMob = () => {
+      const slot = inventoryRef.current[selectedRef.current];
+      const def = slot ? ITEMS[slot.item] : null;
+      let damage = def?.attackDamage ?? 1;
+
+      // Strength potion: +50% damage
+      if (potionTypeRef.current === 'potion_strength') {
+        damage = Math.floor(damage * 1.5);
+      }
+
+      // Critical hit: falling → 1.5× damage (MC-style jump-attack)
+      if (player.velocity.y < -0.5) {
+        damage = Math.floor(damage * 1.5);
+      }
+
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      const origin = camera.position.clone();
+
+      // Check all mob managers for hits
+      const managersWithNames: Array<[any, string]> = [
+        [cows, 'Cow'], [pigs, 'Pig'], [chickens, 'Chicken'], [zombies, 'Zombie'],
+        [skeletons, 'Skeleton'], [creepers, 'Creeper'], [spiders, 'Spider'],
+        [wolves, 'Wolf'], [endermen, 'Enderman'], [ironGolems, 'Iron Golem'],
+        [slimes, 'Slime'], [bats, 'Bat'], [villagers, 'Villager'],
+        [witches, 'Witch'], [blazes, 'Blaze'], [phantoms, 'Phantom'],
+        [foxes, 'Fox'], [ghasts, 'Ghast'],
+        [parrots, 'Parrot'], [turtles, 'Turtle'],
+      ];
+      let hit = false;
+      for (const [mgr, mobName] of managersWithNames) {
+        const mob = mgr.hitTest(origin, camDir, 4);
+        if (mob) {
+          const drops = mgr.dealDamage(mob, damage);
+          audio.playBlockBreak('royal_brick');
+          if (drops) {
+            let inv = inventoryRef.current;
+            for (const drop of drops) {
+              inv = addItem(inv, drop.item, drop.count);
+            }
+            inventoryRef.current = inv;
+            setInventory(inv);
+            // XP for killing mob + stats + XP orbs (tier multiplied)
+            statsRef.current.mobsKilled++;
+            // Kill feed entry
+            setKillFeed(prev => {
+              const next = [...prev, { id: Date.now(), text: `⚔ Killed ${mobName}`, ts: Date.now() }];
+              if (next.length > 5) next.shift();
+              return next;
+            });
+            const mobXp = Math.round(5 * TIER_XP_MULTIPLIER[balanceTier]);
+            const newXp = totalXpRef.current + mobXp;
+            totalXpRef.current = newXp;
+            setTotalXp(newXp);
+            spawnXPOrbs(mob.group.position.x, mob.group.position.y, mob.group.position.z, 3);
+            // Kill bounty: wallet users earn emeralds on kill
+            const bounty = TIER_KILL_BOUNTY[balanceTier];
+            if (bounty > 0) {
+              let bInv = inventoryRef.current;
+              bInv = addItem(bInv, 'emerald', bounty);
+              inventoryRef.current = bInv;
+              setInventory(bInv);
+              statsRef.current.emeraldsEarned += bounty;
+            }
+          }
+          // Decrement tool durability
+          if (slot && def?.isTool && def.durability) {
+            const { inv: afterTool, broke } = useTool(inventoryRef.current, selectedRef.current);
+            inventoryRef.current = afterTool;
+            setInventory(afterTool);
+            if (broke) audio.playBlockBreak('royal_brick');
+          }
+          hit = true;
+          break;
+        }
+      }
+      return hit;
+    };
+
+    // Override onBreak to first check for mob attack
+    const originalOnBreak = player.onBreak;
+    player.onBreak = (x, y, z) => {
+      // Try to attack mob first — if no mob hit, break block
+      const mobHit = tryAttackMob();
+      if (mobHit) {
+        handSwingTime = 0;
+        return;
+      }
+      if (originalOnBreak) originalOnBreak(x, y, z);
     };
 
     // ---- Day/night palette ----
@@ -715,19 +2336,30 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     // ---- Render loop ----
     const clock = new THREE.Clock();
     let elapsed = 0;
+    // Expose elapsed via ref for bed/time-skip interactions
+    const elapsedRef = { current: elapsed };
     let raf = 0;
     let frameSamples: number[] = [];
     let lowFpsSince = 0;
     let shadowsDisabled = false;
 
-    // Health / hunger accumulators — use floats for smooth sub-frame math,
-    // but only push integer-rounded values to React state.
+    // Health / hunger accumulators
     let healthFloat = MAX_HEALTH;
     let hungerFloat = MAX_HUNGER;
+    let lastZombieSpawn = 0;
+    let hurtFlashTimer = 0;
+    let lastPosX = camera.position.x;
+    let lastPosZ = camera.position.z;
+    let cameraShakeTimer = 0;
+    let cameraShakeIntensity = 0;
+    // Mining combo: consecutive blocks within 3s increase XP bonus
+    let miningCombo = 0;
+    let miningComboTimer = 0;
 
     const tick = () => {
       const dt = clock.getDelta();
       elapsed += dt;
+      elapsedRef.current = elapsed;
       player.update(dt);
       others.update(dt);
       cows.update(dt, camera.position);
@@ -735,16 +2367,555 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       chickens.update(dt, camera.position);
       world.update();
 
+      // Mining combo timer decay
+      if (miningComboTimer > 0) {
+        miningComboTimer -= dt;
+        if (miningComboTimer <= 0) {
+          miningCombo = 0;
+          setMiningComboDisplay(0);
+        }
+      }
+      // Update combo display every few blocks
+      if (miningCombo >= 5 && miningCombo !== miningComboDisplay) {
+        setMiningComboDisplay(miningCombo);
+      }
+
+      // ---- Day/night phase ----
+      const phase = ((elapsed / DAY_LENGTH_SECONDS) + 0.25) % 1;
+      const sunAngle = phase * Math.PI * 2 - Math.PI / 2;
+      const sy = Math.sin(sunAngle);
+      const sx = Math.cos(sunAngle);
+      const dayMix = Math.max(0, Math.min(1, (sy + 0.1) * 1.2));
+      const isNight = sy < -0.05;
+
+      // ---- Hostile mob spawning & update ----
+      zombies.isNight = isNight;
+      skeletons.isNight = isNight;
+      creepers.isNight = isNight;
+      spiders.isNight = isNight;
+      if (isNight) {
+        if (elapsed - lastZombieSpawn > 30) {
+          if (zombies.getMobs().length < 8) zombies.spawnNight(3, camera.position.x, camera.position.z);
+          if (skeletons.getMobs().length < 4) skeletons.spawnNight(2, camera.position.x, camera.position.z);
+          if (creepers.getMobs().length < 3) creepers.spawnNight(1, camera.position.x, camera.position.z);
+          if (spiders.getMobs().length < 5) spiders.spawnNight(2, camera.position.x, camera.position.z);
+          lastZombieSpawn = elapsed;
+        }
+      }
+      zombies.update(dt, camera.position);
+      skeletons.update(dt, camera.position);
+      creepers.update(dt, camera.position);
+      spiders.update(dt, camera.position);
+      wolves.update(dt, camera.position);
+      endermen.isNight = isNight;
+      endermen.update(dt, camera.position);
+      ironGolems.update(dt, camera.position);
+      slimes.update(dt, camera.position);
+      bats.update(dt, camera.position);
+      villagers.update(dt, camera.position);
+      witches.update(dt, camera.position);
+      blazes.update(dt, camera.position);
+      phantoms.isNight = isNight;
+      phantoms.update(dt, camera.position);
+      foxes.update(dt, camera.position);
+      ghasts.update(dt, camera.position);
+      parrots.update(dt, camera.position);
+      turtles.update(dt, camera.position);
+
+      // Enderman spawn at night (rare)
+      witches.isNight = isNight;
+      if (isNight && elapsed - lastZombieSpawn < 1) {
+        if (endermen.getMobs().length < 2) endermen.spawnNight(1, camera.position.x, camera.position.z);
+        if (slimes.getMobs().length < 3) slimes.spawnNight(2, camera.position.x, camera.position.z);
+        if (witches.getMobs().length < 2) witches.spawnNight(1, camera.position.x, camera.position.z);
+        // Phantoms spawn at night (swoop from sky)
+        if (phantoms.getMobs().length < 2) phantoms.spawnFlying(1, camera.position.x, camera.position.z, 30);
+        // Rare blaze spawns
+        if (blazes.getMobs().length < 1 && Math.random() < 0.3) blazes.spawn(1, camera.position.x, camera.position.z, 20);
+        // Very rare ghast (only for wallet users, tier bonus)
+        if (ghasts.getMobs().length < 1 && walletAddress && Math.random() < 0.15) {
+          ghasts.spawnFlying(1, camera.position.x, camera.position.z, 25);
+        }
+      }
+
+      // Enderman: check if player is looking at one
+      {
+        const lookDir = new THREE.Vector3();
+        camera.getWorldDirection(lookDir);
+        endermen.checkLookedAt(camera.position, lookDir);
+      }
+
+      // Tamed wolves attack hostile mobs near them
+      for (const hostileMgr of [zombies, skeletons, spiders]) {
+        for (const mob of hostileMgr.getMobs()) {
+          if (mob.dead) continue;
+          const wolfDmg = wolves.attackTarget(mob.group.position);
+          if (wolfDmg > 0) {
+            hostileMgr.dealDamage(mob, wolfDmg);
+          }
+        }
+      }
+
+      // ---- Hostile mob attacks on player ----
+      const applyMobDamage = (rawDmg: number) => {
+        if (rawDmg <= 0) return;
+        // Shield blocking: halve damage if blocking
+        let dmg = rawDmg;
+        if (isBlockingRef.current) dmg = Math.floor(dmg * 0.5);
+        // Armor reduction
+        dmg = applyArmorReduction(dmg, armorRef.current);
+        healthFloat = Math.max(0, healthFloat - dmg);
+        healthRef.current = Math.round(healthFloat);
+        setHealth(Math.round(healthFloat));
+        hurtFlashTimer = 0.3;
+        audio.playBlockBreak('royal_brick');
+      };
+
+      // Zombie melee
+      applyMobDamage(zombies.checkAttack(camera.position));
+      // Skeleton ranged
+      applyMobDamage(skeletons.checkRangedAttack(camera.position));
+      // Creeper explosion
+      const creeperResult = creepers.checkExplosion(camera.position, dt);
+      if (creeperResult) {
+        applyMobDamage(creeperResult.damage);
+        // Creeper explosion destroys nearby blocks (3×3×3 around detonation)
+        const cx = Math.floor(creeperResult.pos.x);
+        const cy = Math.floor(creeperResult.pos.y);
+        const cz = Math.floor(creeperResult.pos.z);
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dz = -1; dz <= 1; dz++) {
+              const bx = cx + dx, by = cy + dy, bz = cz + dz;
+              const bt = world.getType(bx, by, bz);
+              if (bt && bt !== 'bedrock' && bt !== 'obsidian') {
+                world.removeBlock(bx, by, bz, true);
+                socket.emit('block:break', { x: bx, y: by, z: bz });
+              }
+            }
+          }
+        }
+        audio.playBlockBreak('cobblestone');
+        // Camera shake from creeper
+        const cDist = camera.position.distanceTo(creeperResult.pos);
+        if (cDist < 10) {
+          cameraShakeTimer = 0.4;
+          cameraShakeIntensity = 0.2 * (1 - cDist / 10);
+        }
+      }
+      // Spider melee
+      applyMobDamage(spiders.checkAttack(camera.position));
+      // Enderman melee
+      applyMobDamage(endermen.checkAttack(camera.position));
+      // Slime melee
+      applyMobDamage(slimes.checkAttack(camera.position));
+      // Witch ranged potion attack
+      applyMobDamage(witches.checkRangedAttack(camera.position));
+      // Blaze fireball attack
+      applyMobDamage(blazes.checkRangedAttack(camera.position));
+      // Phantom dive attack
+      applyMobDamage(phantoms.checkDiveAttack(camera.position));
+      // Ghast fireball attack
+      applyMobDamage(ghasts.checkRangedAttack(camera.position));
+
+      // Iron golem auto-attacks nearby hostile mobs
+      for (const zmob of zombies.getMobs()) {
+        if (zmob.dead) continue;
+        const golemDmg = ironGolems.attackHostileNear(zmob.group.position);
+        if (golemDmg > 0) zombies.dealDamage(zmob, golemDmg);
+      }
+
+      // ---- Cactus contact damage (check every ~0.5s) ----
+      if (Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2)) {
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        for (let ddx = -1; ddx <= 1; ddx++) {
+          for (let ddy = -1; ddy <= 1; ddy++) {
+            for (let ddz = -1; ddz <= 1; ddz++) {
+              if (world.getType(px + ddx, py + ddy, pz + ddz) === 'cactus') {
+                const cdx = (px + ddx + 0.5) - camera.position.x;
+                const cdz = (pz + ddz + 0.5) - camera.position.z;
+                if (Math.abs(cdx) < 0.9 && Math.abs(cdz) < 0.9) {
+                  applyMobDamage(1); // 1 damage from cactus
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ---- Soul sand slowdown ----
+      {
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y) - 1;
+        const pz = Math.floor(camera.position.z);
+        const below = world.getType(px, py, pz);
+        if (below === 'soul_sand') {
+          player.speedMultiplier = Math.min(player.speedMultiplier, 0.4);
+        }
+        if (below === 'mud') {
+          player.speedMultiplier = Math.min(player.speedMultiplier, 0.5);
+        }
+        // Water slowdown: check if player is inside water block
+        const atFeet = world.getType(px, py + 1, pz);
+        if (atFeet === 'water') {
+          player.speedMultiplier = Math.min(player.speedMultiplier, 0.35);
+        }
+      }
+
+      // ---- Nether portal interaction (standing on/near portal block) ----
+      {
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        let nearPortal = false;
+        for (let dx = -1; dx <= 1 && !nearPortal; dx++) {
+          for (let dy = -1; dy <= 1 && !nearPortal; dy++) {
+            for (let dz = -1; dz <= 1 && !nearPortal; dz++) {
+              if (world.getType(px + dx, py + dy, pz + dz) === 'nether_portal') {
+                nearPortal = true;
+              }
+            }
+          }
+        }
+        if (nearPortal && Math.floor(elapsed * 0.2) !== Math.floor((elapsed - dt) * 0.2)) {
+          // Random teleport in a 40-block radius (nether portal effect)
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 20 + Math.random() * 20;
+          const nx = player.position.x + Math.cos(angle) * dist;
+          const nz = player.position.z + Math.sin(angle) * dist;
+          player.position.set(nx, 25, nz);
+          setToast('🌀 Nether Portal — Teleported to a new location!');
+          setTimeout(() => setToast(null), 3000);
+        }
+      }
+
+      // ---- Sponge absorbs nearby water (removes lava blocks within 3-block radius) ----
+      if (Math.floor(elapsed) !== Math.floor(elapsed - dt)) {
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        for (let dx = -5; dx <= 5; dx++) {
+          for (let dy = -5; dy <= 5; dy++) {
+            for (let dz = -5; dz <= 5; dz++) {
+              if (world.getType(px + dx, py + dy, pz + dz) === 'sponge') {
+                // Remove lava within 3 blocks of sponge
+                const sx = px + dx, sy = py + dy, sz = pz + dz;
+                for (let sdx = -3; sdx <= 3; sdx++) {
+                  for (let sdy = -3; sdy <= 3; sdy++) {
+                    for (let sdz = -3; sdz <= 3; sdz++) {
+                      if (world.getType(sx + sdx, sy + sdy, sz + sdz) === 'lava') {
+                        world.removeBlock(sx + sdx, sy + sdy, sz + sdz, true);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ---- Melon drops slices on break (already in BLOCK_DROPS) ----
+
+      // ---- Beacon area buffs (check every ~2s) ----
+      if (Math.floor(elapsed * 0.5) !== Math.floor((elapsed - dt) * 0.5)) {
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        let nearBeacon = false;
+        // Scan 16-block radius for beacons
+        for (let dx = -16; dx <= 16 && !nearBeacon; dx += 4) {
+          for (let dz = -16; dz <= 16 && !nearBeacon; dz += 4) {
+            for (let dy = -8; dy <= 8 && !nearBeacon; dy += 2) {
+              if (world.getType(px + dx, py + dy, pz + dz) === 'beacon') {
+                nearBeacon = true;
+              }
+            }
+          }
+        }
+        if (nearBeacon) {
+          const mult = TIER_BEACON_MULTIPLIER[balanceTier];
+          beaconBuffsRef.current = { speed: 0.15 * mult, regen: 0.3 * mult, strength: 0.1 * mult };
+          if (!beaconActive) setBeaconActive(true);
+        } else {
+          beaconBuffsRef.current = { speed: 0, regen: 0, strength: 0 };
+          if (beaconActive) setBeaconActive(false);
+        }
+      }
+      // Apply beacon regen
+      if (beaconBuffsRef.current.regen > 0) {
+        healthFloat = Math.min(MAX_HEALTH, healthFloat + beaconBuffsRef.current.regen * dt);
+        healthRef.current = Math.round(healthFloat);
+        setHealth(Math.round(healthFloat));
+      }
+
+      // ---- Wallet daily rewards (every 5 min of play) ----
+      if (walletAddress && elapsed > 30) {
+        const timeSinceReward = (elapsed * 1000) - lastWalletRewardRef.current;
+        if (timeSinceReward >= WALLET_REWARD_INTERVAL_MS) {
+          lastWalletRewardRef.current = elapsed * 1000;
+          // Random reward based on tier
+          const rewardPool: Array<{ item: ItemType; count: number; label: string }> = [
+            { item: 'iron_ingot', count: 2, label: '🔩 2 Iron' },
+            { item: 'coal', count: 4, label: '⚫ 4 Coal' },
+            { item: 'arrow', count: 8, label: '🏹 8 Arrows' },
+            { item: 'bread', count: 3, label: '🍞 3 Bread' },
+          ];
+          if (balanceTier === 'bronze' || balanceTier === 'silver' || balanceTier === 'gold' || balanceTier === 'diamond') {
+            rewardPool.push({ item: 'diamond', count: 1, label: '💎 Diamond' });
+            rewardPool.push({ item: 'golden_apple', count: 1, label: '🍎 Golden Apple' });
+          }
+          if (balanceTier === 'gold' || balanceTier === 'diamond') {
+            rewardPool.push({ item: 'emerald', count: 3, label: '💚 3 Emeralds' });
+            rewardPool.push({ item: 'ender_pearl', count: 1, label: '🌀 Ender Pearl' });
+          }
+          const reward = rewardPool[Math.floor(Math.random() * rewardPool.length)];
+          let rInv = inventoryRef.current;
+          rInv = addItem(rInv, reward.item, reward.count);
+          inventoryRef.current = rInv;
+          setInventory(rInv);
+          setToast(`⛓ Wallet Reward: ${reward.label}!`);
+          setTimeout(() => setToast(null), 3000);
+        }
+      }
+
+      // ---- Diamond tier perk: auto-repair tools (1 durability per 10s) ----
+      if (balanceTier === 'diamond' && Math.floor(elapsed / 10) !== Math.floor((elapsed - dt) / 10)) {
+        const inv = inventoryRef.current;
+        let repaired = false;
+        const newInv = inv.map(slot => {
+          if (!slot) return slot;
+          const def = ITEMS[slot.item];
+          if (def.isTool && def.durability && slot.durability !== undefined && slot.durability < def.durability) {
+            repaired = true;
+            return { ...slot, durability: Math.min(def.durability, slot.durability + 1) };
+          }
+          return slot;
+        });
+        if (repaired) {
+          inventoryRef.current = newInv;
+          setInventory(newInv);
+        }
+      }
+
+      // ---- Gold tier perk: slow hunger drain reduction ----
+      // Gold+ tiers get 20% slower hunger drain (applied via multiplier in hunger calc)
+
+      // ---- Potion effect timer + apply effects ----
+      if (potionTypeRef.current) {
+        potionTimerRef.current -= dt;
+        if (potionTimerRef.current <= 0) {
+          potionTypeRef.current = null;
+          potionTimerRef.current = 0;
+          setActivePotion(null);
+          // Reset player modifiers
+          player.speedMultiplier = 1.0;
+          player.jumpMultiplier = 1.0;
+        } else {
+          // Apply continuous potion effects
+          switch (potionTypeRef.current) {
+            case 'potion_speed':
+              player.speedMultiplier = 1.5 + beaconBuffsRef.current.speed;
+              break;
+            case 'potion_jump':
+              player.jumpMultiplier = 1.6;
+              player.speedMultiplier = 1.0 + beaconBuffsRef.current.speed;
+              break;
+            default:
+              player.speedMultiplier = 1.0 + beaconBuffsRef.current.speed;
+              player.jumpMultiplier = 1.0;
+              break;
+          }
+        }
+      } else {
+        player.speedMultiplier = 1.0 + beaconBuffsRef.current.speed;
+        player.jumpMultiplier = 1.0;
+      }
+
+      // Apply tier-based bonuses
+      player.miningSpeedMultiplier = TIER_MINING_SPEED[balanceTier];
+      player.speedMultiplier *= TIER_SPEED_BONUS[balanceTier];
+
+      // ---- FOV: spyglass zoom / sprint widen ----
+      const isSprinting = Math.abs(player.velocity.x) + Math.abs(player.velocity.z) > 5;
+      const targetFov = spyglassRef.current ? 15 : isSprinting ? 85 : 75;
+      if (Math.abs(camera.fov - targetFov) > 0.5) {
+        camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 6);
+        camera.updateProjectionMatrix();
+      }
+
+      // ---- Falling blocks (sand, gravel) ----
+      if (Math.floor(elapsed * 4) !== Math.floor((elapsed - dt) * 4)) {
+        // Check every ~0.25s for performance
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        for (let dx = -8; dx <= 8; dx++) {
+          for (let dz = -8; dz <= 8; dz++) {
+            for (let dy = 1; dy <= 24; dy++) {
+              const bx = px + dx, bz = pz + dz;
+              const bt = world.getType(bx, dy, bz);
+              if ((bt === 'sand_blue' || bt === 'gravel') && !world.has(bx, dy - 1, bz)) {
+                world.removeBlock(bx, dy, bz, true);
+                // Find where it lands
+                let landY = dy - 1;
+                while (landY > 0 && !world.has(bx, landY - 1, bz)) landY--;
+                world.addBlock(bx, landY, bz, bt, true);
+                socket.emit('block:break', { x: bx, y: dy, z: bz });
+                socket.emit('block:place', { x: bx, y: landY, z: bz, type: bt });
+              }
+            }
+          }
+        }
+      }
+
+      // ---- Fishing cooldown ----
+      if (fishingCooldownRef.current > 0) fishingCooldownRef.current -= dt;
+
+      // ---- Wheat growth: every ~30s, check nearby farmland for wheat ----
+      if (Math.floor(elapsed / 30) !== Math.floor((elapsed - dt) / 30)) {
+        const px = Math.floor(camera.position.x);
+        const pz = Math.floor(camera.position.z);
+        for (let dx = -12; dx <= 12; dx++) {
+          for (let dz = -12; dz <= 12; dz++) {
+            for (let dy = 0; dy <= 20; dy++) {
+              const bx = px + dx, bz = pz + dz;
+              const bt = world.getType(bx, dy, bz);
+              // Farmland without wheat on top → grow seeds
+              if (bt === 'farmland' && !world.has(bx, dy + 1, bz) && Math.random() < 0.1) {
+                world.addBlock(bx, dy + 1, bz, 'wheat', true);
+                socket.emit('block:place', { x: bx, y: dy + 1, z: bz, type: 'wheat' });
+              }
+            }
+          }
+        }
+      }
+
+      // ---- Weather cycle: change every ~2 minutes ----
+      if (Math.floor(elapsed / 120) !== Math.floor((elapsed - dt) / 120)) {
+        const roll = Math.random();
+        let wNew: 'clear' | 'rain' | 'thunder' = 'clear';
+        if (roll >= 0.5 && roll < 0.8) wNew = 'rain';
+        else if (roll >= 0.8) wNew = 'thunder';
+        weatherRef.current = wNew;
+        setWeatherType(wNew);
+        // Announce thunderstorm bonus for wallet holders
+        if (wNew === 'thunder' && walletAddress) {
+          appendChat({ username: 'system', message: '⛈️ Thunderstorm! Wallet holders get 2x XP during storms!', isSystem: true });
+        }
+      }
+      // ---- Lightning strikes during thunderstorm ----
+      if (weatherRef.current === 'thunder' && Math.random() < dt * 0.08) {
+        // Random lightning strike near player
+        const lx = camera.position.x + (Math.random() - 0.5) * 60;
+        const lz = camera.position.z + (Math.random() - 0.5) * 60;
+        // Flash effect — brief white overlay
+        cameraShakeTimer = 0.15;
+        cameraShakeIntensity = 0.05;
+        // Lightning bolt visual (temporary bright line)
+        const lGeom = new THREE.BoxGeometry(0.15, 30, 0.15);
+        const lMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+        const bolt = new THREE.Mesh(lGeom, lMat);
+        bolt.position.set(lx, 25, lz);
+        bolt.castShadow = false;
+        scene.add(bolt);
+        // Remove after 0.2 seconds
+        setTimeout(() => {
+          scene.remove(bolt);
+          lMat.dispose();
+          lGeom.dispose();
+        }, 200);
+        audio.playBlockBreak('cobblestone'); // thunder sound
+      }
+
+      // ---- Compass check: if player has compass in inventory ----
+      if (Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2)) {
+        const inv = inventoryRef.current;
+        const has = inv.some(s => s && s.item === 'compass');
+        setHasCompass(has);
+      }
+
+      // ---- Campfire cooking: if player near campfire, auto-cook raw food ----
+      if (Math.floor(elapsed / CAMPFIRE_COOK_INTERVAL) !== Math.floor((elapsed - dt) / CAMPFIRE_COOK_INTERVAL)) {
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        let nearCampfire = false;
+        for (let ddx = -3; ddx <= 3 && !nearCampfire; ddx++) {
+          for (let ddy = -2; ddy <= 2 && !nearCampfire; ddy++) {
+            for (let ddz = -3; ddz <= 3 && !nearCampfire; ddz++) {
+              if (world.getType(px + ddx, py + ddy, pz + ddz) === 'campfire') nearCampfire = true;
+            }
+          }
+        }
+        if (nearCampfire) {
+          const inv = inventoryRef.current;
+          const cookMap: Record<string, ItemType> = {
+            'beef': 'cooked_beef',
+            'porkchop': 'cooked_porkchop',
+            'chicken_meat': 'cooked_chicken',
+            'raw_fish': 'cooked_fish',
+          };
+          for (const [raw, cooked] of Object.entries(cookMap)) {
+            const rawIdx = inv.findIndex(s => s && s.item === raw);
+            if (rawIdx !== -1) {
+              let next = removeFromSlot(inv, rawIdx, 1);
+              next = addItem(next, cooked, 1);
+              inventoryRef.current = next;
+              setInventory(next);
+              setToast(`🔥 Campfire cooked ${ITEMS[cooked].label}!`);
+              setTimeout(() => setToast(null), 2000);
+              break; // cook one at a time
+            }
+          }
+        }
+      }
+
+      // ---- Breath sync for HUD ----
+      const curBreath = Math.round(player.breathTimer);
+      if (curBreath !== breathRef.current) {
+        breathRef.current = curBreath;
+        setBreath(curBreath);
+      }
+
       // ---- Hunger drain ----
       const hVel = Math.abs(player.velocity.x) + Math.abs(player.velocity.z);
       const sprinting = hVel > 5;
       const walking = hVel > 0.5;
-      const drainRate = sprinting ? HUNGER_DRAIN_SPRINT : walking ? HUNGER_DRAIN_WALK : HUNGER_DRAIN_IDLE;
+      const baseDrain = sprinting ? HUNGER_DRAIN_SPRINT : walking ? HUNGER_DRAIN_WALK : HUNGER_DRAIN_IDLE;
+      // Gold+ tier: 25% slower hunger drain
+      const hungerTierMult = (balanceTier === 'gold' || balanceTier === 'diamond') ? 0.75 : balanceTier === 'silver' ? 0.9 : 1.0;
+      const drainRate = baseDrain * hungerTierMult;
       hungerFloat = Math.max(0, hungerFloat - drainRate * dt);
+      // Sync hunger to player for sprint gating
+      player.hungerLevel = hungerFloat;
       const hungerInt = Math.round(hungerFloat);
       if (hungerInt !== hungerRef.current) {
         hungerRef.current = hungerInt;
         setHunger(hungerInt);
+      }
+
+      // ---- Sprint particles (dust at feet) ----
+      if (sprinting && Math.abs(player.velocity.y) < 0.5 && Math.floor(elapsed * 8) !== Math.floor((elapsed - dt) * 8)) {
+        const px = camera.position.x + (Math.random() - 0.5) * 0.4;
+        const py = camera.position.y - 1.5;
+        const pz = camera.position.z + (Math.random() - 0.5) * 0.4;
+        // Check block type below for particle color
+        const groundType = world.getType(Math.floor(px), Math.floor(py), Math.floor(pz));
+        const dustColor = groundType === 'sand_blue' ? 0xe6d9a1 : groundType === 'ice_stone' ? 0xdfe6ea : groundType === 'snow_block' ? 0xf0f0ff : 0x8b5a2b;
+        const dustMat = new THREE.MeshBasicMaterial({ color: dustColor, transparent: true, opacity: 0.5 });
+        const dust = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06), dustMat);
+        dust.position.set(px, py + 0.1, pz);
+        dust.castShadow = false;
+        scene.add(dust);
+        particles.push({
+          mesh: dust,
+          velocity: new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.3 + Math.random() * 0.3, (Math.random() - 0.5) * 0.5),
+          age: 0,
+          life: 0.4 + Math.random() * 0.3,
+        });
       }
 
       // ---- Health regen / starvation ----
@@ -763,23 +2934,93 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         setHealth(healthInt);
       }
 
-      // Death → respawn
+      // Death → show death screen
       if (healthFloat <= 0) {
-        healthFloat = MAX_HEALTH;
-        hungerFloat = MAX_HUNGER;
-        healthRef.current = MAX_HEALTH;
-        hungerRef.current = MAX_HUNGER;
-        setHealth(MAX_HEALTH);
-        setHunger(MAX_HUNGER);
-        player.setPosition(64.5, 30, 64.5);
+        statsRef.current.deaths++;
+        statsRef.current.currentLifeSeconds = 0; // reset life timer
+        setIsDead(true);
+        player.inventoryOpen = true; // freeze movement
       }
 
-      // ---- Day/night ----
-      const phase = ((elapsed / DAY_LENGTH_SECONDS) + 0.25) % 1;
-      const sunAngle = phase * Math.PI * 2 - Math.PI / 2;
-      const sy = Math.sin(sunAngle);
-      const sx = Math.cos(sunAngle);
-      const dayMix = Math.max(0, Math.min(1, (sy + 0.1) * 1.2));
+      // Track play time & exploration stats
+      statsRef.current.playTimeSeconds += dt;
+      statsRef.current.currentLifeSeconds += dt;
+      if (statsRef.current.currentLifeSeconds > statsRef.current.longestLifeSeconds) {
+        statsRef.current.longestLifeSeconds = statsRef.current.currentLifeSeconds;
+      }
+      // Track distance walked (approximate from position change)
+      const py = camera.position.y;
+      if (py > statsRef.current.highestY) statsRef.current.highestY = py;
+      if (py < statsRef.current.lowestY) statsRef.current.lowestY = py;
+      // Distance tracking
+      const dx = camera.position.x - lastPosX;
+      const dz = camera.position.z - lastPosZ;
+      const distMoved = Math.sqrt(dx * dx + dz * dz);
+      if (distMoved < 10) { // Ignore teleports
+        statsRef.current.distanceWalked += distMoved;
+      }
+      lastPosX = camera.position.x;
+      lastPosZ = camera.position.z;
+      // Wallet & tier tracking
+      statsRef.current.walletConnected = !!walletAddress;
+      statsRef.current.currentTier = balanceTier;
+
+      // Hurt flash timer → damage overlay
+      if (hurtFlashTimer > 0) {
+        hurtFlashTimer -= dt;
+        const flashAlpha = Math.min(1, hurtFlashTimer / 0.15);
+        if (Math.abs(flashAlpha - damageFlashRef.current) > 0.05) {
+          damageFlashRef.current = flashAlpha;
+          setDamageFlash(flashAlpha);
+        }
+      } else if (damageFlashRef.current > 0) {
+        damageFlashRef.current = 0;
+        setDamageFlash(0);
+      }
+
+      // Underwater detection: check if camera is inside a water block
+      const camPos = camera.position;
+      const headBlock = world.getType(Math.floor(camPos.x), Math.floor(camPos.y), Math.floor(camPos.z));
+      const nowUnderwater = headBlock === 'water';
+      if (nowUnderwater !== (isUnderwater)) {
+        setIsUnderwater(nowUnderwater);
+      }
+      // Underwater fog: drastically reduce visibility
+      if (nowUnderwater && scene.fog instanceof THREE.Fog) {
+        scene.fog.near = 2;
+        scene.fog.far = 20;
+        scene.fog.color.set(0x1a3a6a);
+      } else if (!nowUnderwater && scene.fog instanceof THREE.Fog && scene.fog.far < 30) {
+        scene.fog.near = 20;
+        scene.fog.far = 90;
+      }
+
+      // Biome detection: infer biome from surface block type
+      {
+        const bx = Math.floor(camPos.x), bz = Math.floor(camPos.z);
+        // Scan downward from player to find surface
+        let surfaceType: string | null = null;
+        for (let by = Math.floor(camPos.y); by >= 0; by--) {
+          const t = world.getType(bx, by, bz);
+          if (t && t !== 'water' && t !== 'sugar_cane' && t !== 'vine' && t !== 'lily_pad') {
+            surfaceType = t;
+            break;
+          }
+        }
+        let biome = 'Plains';
+        if (surfaceType === 'sand_blue') biome = 'Desert';
+        else if (surfaceType === 'ice_stone' || surfaceType === 'packed_ice' || surfaceType === 'snow_block') biome = 'Snowy Tundra';
+        else if (surfaceType === 'mud' || surfaceType === 'clay') biome = 'Swamp';
+        else if (surfaceType === 'royal_brick' || surfaceType === 'deepslate') biome = 'Mountains';
+        else if (surfaceType === 'moss_block') biome = 'Lush Forest';
+        else if (surfaceType === 'cobblestone' || surfaceType === 'planks' || surfaceType === 'base_block') biome = 'City';
+        if (biome !== currentBiomeRef.current) {
+          currentBiomeRef.current = biome;
+          setCurrentBiome(biome);
+        }
+      }
+
+      // ---- Day/night visuals ----
       const sunsetWeight = Math.max(0, 1 - Math.abs(sy) * 4) * Math.max(0, 1 - Math.abs(sy));
 
       lerp3(PALETTE.night.top, PALETTE.day.top, dayMix, _tmpCol);
@@ -819,6 +3060,14 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       lerp3(PALETTE.night.hemiGround, PALETTE.day.hemiGround, dayMix, _tmpCol2);
       hemi.groundColor.copy(_tmpCol2);
       hemi.intensity = 0.15 + 0.4 * dayMix;
+      // Night vision potion: brighten everything at night
+      if (potionTypeRef.current === 'potion_night_vision' && dayMix < 0.5) {
+        sunLight.intensity = Math.max(sunLight.intensity, 0.8);
+        hemi.intensity = Math.max(hemi.intensity, 0.6);
+        scene.fog = null;
+      } else if (scene.fog === null && renderer.toneMappingExposure > 0) {
+        // Restore fog when night vision ends (fog re-created each frame anyway)
+      }
       starMat.opacity = Math.max(0, 1 - dayMix * 3);
       stars.visible = starMat.opacity > 0.02;
       cloudMat.opacity = 0.25 + 0.45 * dayMix;
@@ -836,6 +3085,49 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       const altitudeWind = Math.max(0, Math.min(1, (camera.position.y - 15) / 30));
       audio.setAmbientWind(altitudeWind);
 
+      // ---- Weather particles ----
+      {
+        const wt = weatherRef.current;
+        if (wt !== currentWeather) currentWeather = wt;
+        rainMesh.visible = wt !== 'clear';
+        if (wt !== 'clear') {
+          const pos = rainGeom.attributes.position as THREE.BufferAttribute;
+          for (let i = 0; i < rainCount; i++) {
+            pos.array[i * 3 + 1] -= dt * 18;
+            if (pos.array[i * 3 + 1] < 0) {
+              pos.array[i * 3 + 0] = camera.position.x + (Math.random() - 0.5) * 80;
+              pos.array[i * 3 + 1] = camera.position.y + 20 + Math.random() * 20;
+              pos.array[i * 3 + 2] = camera.position.z + (Math.random() - 0.5) * 80;
+            }
+          }
+          pos.needsUpdate = true;
+          // Thunder: random lightning flash
+          if (wt === 'thunder') {
+            if (lightningFlashTimer <= 0 && Math.random() < 0.002) {
+              lightningFlashTimer = 0.15;
+              // Lightning damage at random nearby spot
+              const lx = camera.position.x + (Math.random() - 0.5) * 40;
+              const lz = camera.position.z + (Math.random() - 0.5) * 40;
+              const ldist = Math.sqrt(
+                (lx - camera.position.x) ** 2 + (lz - camera.position.z) ** 2
+              );
+              if (ldist < 5) {
+                applyMobDamage(5); // lightning strike near player
+              }
+            }
+          }
+          if (lightningFlashTimer > 0) {
+            lightningFlashTimer -= dt;
+            ambient.intensity = 2.0; // flash
+          } else {
+            ambient.intensity = wt === 'rain' ? 0.2 : 0.15;
+          }
+        } else {
+          ambient.intensity = 0.3;
+          lightningFlashTimer = 0;
+        }
+      }
+
       // ---- Hand ----
       const heldSlot = inventoryRef.current[selectedRef.current];
       if (heldSlot) {
@@ -843,11 +3135,18 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         const heldColor = BLOCKS[heldSlot.item as BlockType]?.color ?? parseInt(heldDef.color.replace('#', ''), 16);
         handMat.color.setHex(heldColor);
         hand.visible = true;
-        // Tool: show rotated / elongated
         if (heldDef.isTool) {
           hand.scale.set(0.2, 0.8, 0.2);
         } else {
           hand.scale.set(1, 1, 1);
+        }
+        // Enchanted item glow
+        if (enchantedItemsRef.current.has(selectedRef.current)) {
+          handMat.emissive.setHex(0x6622aa);
+          handMat.emissiveIntensity = 0.3 + Math.sin(elapsed * 4) * 0.15;
+        } else {
+          handMat.emissive.setHex(0x000000);
+          handMat.emissiveIntensity = 0;
         }
       } else {
         hand.visible = false;
@@ -901,6 +3200,154 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         mat.opacity = 1 - Math.max(0, (t - 0.5) * 2);
       }
 
+      // ---- Dynamic torch lighting ----
+      if (elapsed - lastTorchLightUpdate > 0.5) {
+        lastTorchLightUpdate = elapsed;
+        const nearTorches: { x: number; y: number; z: number; dist: number }[] = [];
+        const plx = Math.floor(camera.position.x);
+        const ply = Math.floor(camera.position.y);
+        const plz = Math.floor(camera.position.z);
+        for (let ddx = -6; ddx <= 6; ddx++) {
+          for (let ddz = -6; ddz <= 6; ddz++) {
+            for (let ddy = -3; ddy <= 6; ddy++) {
+              const tx = plx + ddx, ty = ply + ddy, tz = plz + ddz;
+              const bt = world.getType(tx, ty, tz);
+              if (bt === 'torch' || bt === 'lantern' || bt === 'jack_o_lantern' || bt === 'campfire' || bt === 'glowstone' || bt === 'sea_lantern' || bt === 'redstone_lamp') {
+                const dist = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+                nearTorches.push({ x: tx, y: ty, z: tz, dist });
+              }
+            }
+          }
+        }
+        nearTorches.sort((a, b) => a.dist - b.dist);
+        for (let i = 0; i < MAX_TORCH_LIGHTS; i++) {
+          if (i < nearTorches.length) {
+            const t = nearTorches[i];
+            torchLights[i].position.set(t.x + 0.5, t.y + 0.8, t.z + 0.5);
+            torchLights[i].intensity = 0.6;
+          } else {
+            torchLights[i].intensity = 0;
+          }
+        }
+      }
+      // Torch light flicker
+      for (const tl of torchLights) {
+        if (tl.intensity > 0) {
+          tl.intensity = 0.5 + Math.sin(elapsed * 8 + tl.position.x * 3) * 0.15 + Math.random() * 0.05;
+        }
+      }
+
+      // ---- Torch smoke particles ----
+      if (elapsed - lastTorchParticleSpawn > 0.3) {
+        lastTorchParticleSpawn = elapsed;
+        const px = Math.floor(camera.position.x);
+        const py = Math.floor(camera.position.y);
+        const pz = Math.floor(camera.position.z);
+        for (let dx = -6; dx <= 6; dx++) {
+          for (let dz = -6; dz <= 6; dz++) {
+            for (let dy = -3; dy <= 6; dy++) {
+              const tx = px + dx, ty = py + dy, tz = pz + dz;
+              if (world.getType(tx, ty, tz) === 'torch' && torchParticles.length < 40) {
+                const tMat = new THREE.MeshStandardMaterial({
+                  color: 0xffcc44, emissive: 0xff8800, emissiveIntensity: 0.6,
+                  transparent: true, opacity: 0.7,
+                });
+                const tMesh = new THREE.Mesh(torchParticleGeom, tMat);
+                tMesh.position.set(tx + 0.5 + (Math.random() - 0.5) * 0.2, ty + 0.8, tz + 0.5 + (Math.random() - 0.5) * 0.2);
+                tMesh.castShadow = false;
+                scene.add(tMesh);
+                torchParticles.push({ mesh: tMesh, age: 0, life: 0.8 + Math.random() * 0.6, baseY: ty + 0.8 });
+              }
+            }
+          }
+        }
+      }
+      // Update torch particles
+      for (let i = torchParticles.length - 1; i >= 0; i--) {
+        const tp = torchParticles[i];
+        tp.age += dt;
+        if (tp.age >= tp.life) {
+          scene.remove(tp.mesh);
+          (tp.mesh.material as THREE.Material).dispose();
+          torchParticles.splice(i, 1);
+          continue;
+        }
+        tp.mesh.position.y += dt * 0.5; // float upward
+        tp.mesh.position.x += (Math.random() - 0.5) * dt * 0.3;
+        tp.mesh.position.z += (Math.random() - 0.5) * dt * 0.3;
+        const tpMat = tp.mesh.material as THREE.MeshStandardMaterial;
+        tpMat.opacity = 0.7 * (1 - tp.age / tp.life);
+        tp.mesh.scale.setScalar(1 - tp.age / tp.life * 0.5);
+      }
+
+      // ---- XP orbs update ----
+      for (let i = xpOrbs.length - 1; i >= 0; i--) {
+        const orb = xpOrbs[i];
+        orb.age += dt;
+        if (orb.age >= orb.life) {
+          scene.remove(orb.mesh);
+          (orb.mesh.material as THREE.Material).dispose();
+          xpOrbs.splice(i, 1);
+          continue;
+        }
+        // Float toward player
+        const toPlayer = new THREE.Vector3().subVectors(camera.position, orb.mesh.position);
+        const dist = toPlayer.length();
+        if (dist < 3 && orb.age > 0.3) {
+          toPlayer.normalize().multiplyScalar(dt * 6);
+          orb.mesh.position.add(toPlayer);
+        } else {
+          orb.velocity.y -= 6 * dt;
+          orb.mesh.position.addScaledVector(orb.velocity, dt);
+        }
+        // Bob and pulse
+        orb.mesh.position.y += Math.sin(orb.age * 8) * 0.01;
+        const scale = 0.8 + Math.sin(orb.age * 6) * 0.2;
+        orb.mesh.scale.setScalar(scale);
+        const orbMat = orb.mesh.material as THREE.MeshStandardMaterial;
+        orbMat.opacity = Math.max(0, 1 - (orb.age / orb.life) * 0.5);
+      }
+
+      // ---- Tier aura particles ----
+      if (balanceTier !== 'none' && walletAddress) {
+        // Spawn aura particles around player
+        if (elapsed - lastAuraSpawn > 0.15) {
+          lastAuraSpawn = elapsed;
+          const color = TIER_AURA_COLORS[balanceTier] || 0x0052ff;
+          const mat = new THREE.MeshStandardMaterial({
+            color, emissive: color, emissiveIntensity: 0.6,
+            transparent: true, opacity: 0.7,
+          });
+          const m = new THREE.Mesh(auraGeom, mat);
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 0.4 + Math.random() * 0.3;
+          const offsetVec = new THREE.Vector3(Math.cos(angle) * radius, -0.5 + Math.random() * 1.5, Math.sin(angle) * radius);
+          m.position.copy(camera.position).add(offsetVec);
+          m.position.y -= 1.2; // Below camera (at body level)
+          m.castShadow = false;
+          scene.add(m);
+          auraParticles.push({ mesh: m, age: 0, life: 1.0 + Math.random() * 0.5, offset: offsetVec, speed: 0.5 + Math.random() * 0.5 });
+        }
+        // Update existing aura particles
+        for (let i = auraParticles.length - 1; i >= 0; i--) {
+          const ap = auraParticles[i];
+          ap.age += dt;
+          if (ap.age >= ap.life) {
+            scene.remove(ap.mesh);
+            (ap.mesh.material as THREE.Material).dispose();
+            auraParticles.splice(i, 1);
+            continue;
+          }
+          // Spiral upward
+          ap.mesh.position.y += dt * ap.speed;
+          const progress = ap.age / ap.life;
+          const mat = ap.mesh.material as THREE.MeshStandardMaterial;
+          mat.opacity = 0.7 * (1 - progress);
+          ap.mesh.scale.setScalar(1 - progress * 0.5);
+          ap.mesh.rotation.y += dt * 3;
+        }
+      }
+
       // FPS + auto-disable shadows
       if (dt > 0) {
         frameSamples.push(1 / dt);
@@ -926,15 +3373,60 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         }
       }
 
+      // ---- Block selection outline update ----
+      {
+        const hit = world.raycast(camera, 5);
+        if (hit && !inventoryOpenRef.current) {
+          selectionLine.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+          selectionLine.visible = true;
+        } else {
+          selectionLine.visible = false;
+        }
+      }
+
+      // Camera shake
+      if (cameraShakeTimer > 0) {
+        cameraShakeTimer -= dt;
+        const shakeAmount = cameraShakeIntensity * (cameraShakeTimer / 0.5);
+        camera.position.x += (Math.random() - 0.5) * shakeAmount;
+        camera.position.y += (Math.random() - 0.5) * shakeAmount * 0.5;
+        camera.position.z += (Math.random() - 0.5) * shakeAmount;
+      }
+
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
 
     const onReenableShadows = (e: KeyboardEvent) => {
+      if (chatOpenRef.current || inventoryOpenRef.current) return;
       if (e.key.toLowerCase() === 'g' && shadowsDisabled) {
         shadowsDisabled = false;
         renderer.shadowMap.enabled = true;
+      }
+      // On-chain panel keybinds
+      if (e.key.toLowerCase() === 'l') {
+        socket.emit('leaderboard:get');
+        setLeaderboardOpen(v => !v);
+      }
+      if (e.key.toLowerCase() === 'p' && !e.ctrlKey) {
+        setProfileOpen(v => !v);
+      }
+      if (e.key.toLowerCase() === 'j') {
+        setAchievementsOpen(v => !v);
+      }
+      if (e.key.toLowerCase() === 'n') {
+        setLandClaimOpen(v => !v);
+      }
+      if (e.key.toLowerCase() === 'k') {
+        setTierPerksOpen(v => !v);
+      }
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setControlsOpen(v => !v);
+      }
+      if (e.key.toLowerCase() === 'm') {
+        setShowMinimap(v => !v);
       }
     };
     window.addEventListener('keydown', onReenableShadows);
@@ -949,6 +3441,8 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     return () => {
       cancelAnimationFrame(raf);
       clearInterval(refreshInterval);
+      clearInterval(statsFlushInterval);
+      clearInterval(achievementCheckInterval);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('keydown', onReenableShadows);
       socket.off('connect', onConnect);
@@ -966,6 +3460,16 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       socket.off('chat:history', onChatHistory);
       socket.off('player:teleport', onTeleport);
       socket.off('chat:welcome', onWelcome);
+      socket.off('leaderboard:data', onLeaderboardData);
+      socket.off('achievement:data', onAchievementData);
+      socket.off('land:data', onLandData);
+      socket.off('land:claimed', onLandClaimed);
+      socket.off('land:unclaimed', onLandUnclaimed);
+      socket.off('profile:open', onProfileOpen);
+      socket.off('leaderboard:open', onLeaderboardOpen);
+      socket.off('achievements:open', onAchievementsOpen);
+      socket.off('land:do_claim', onLandDoClaim);
+      socket.off('land:do_unclaim', onLandDoUnclaim);
       player.dispose();
       playerRef.current = null;
       worldRef.current = null;
@@ -973,6 +3477,17 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       cows.clear();
       pigs.clear();
       chickens.clear();
+      zombies.clear();
+      skeletons.clear();
+      creepers.clear();
+      spiders.clear();
+      wolves.clear();
+      endermen.clear();
+      ironGolems.clear();
+      slimes.clear();
+      bats.clear();
+      villagers.clear();
+      witches.clear();
       flowers.clear();
       world.dispose();
       for (const p of particles) {
@@ -981,6 +3496,19 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       }
       particles.length = 0;
       particleGeom.dispose();
+      for (const tp of torchParticles) {
+        scene.remove(tp.mesh);
+        (tp.mesh.material as THREE.Material).dispose();
+      }
+      torchParticles.length = 0;
+      torchParticleGeom.dispose();
+      for (const orb of xpOrbs) {
+        scene.remove(orb.mesh);
+        (orb.mesh.material as THREE.Material).dispose();
+      }
+      xpOrbs.length = 0;
+      xpOrbGeom.dispose();
+      xpOrbMat.dispose();
       camera.remove(hand);
       handGeom.dispose();
       handMat.dispose();
@@ -994,6 +3522,8 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       waterMat.dispose();
       starGeom.dispose();
       starMat.dispose();
+      rainGeom.dispose();
+      rainMat.dispose();
       renderer.dispose();
       disconnectSocket();
     };
@@ -1009,9 +3539,61 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
     setMuted(now);
   };
 
+  const handleRespawn = () => {
+    setIsDead(false);
+    setHealth(MAX_HEALTH);
+    setHunger(MAX_HUNGER);
+    healthRef.current = MAX_HEALTH;
+    hungerRef.current = MAX_HUNGER;
+    setIsBlocking(false);
+    isBlockingRef.current = false;
+    setBreath(10);
+    breathRef.current = 10;
+    // Drop armor on death (MC behavior)
+    setArmor(createArmorSlots());
+    armorRef.current = createArmorSlots();
+
+    // Tier-based inventory keep on death
+    const keepSlots = TIER_KEEP_INVENTORY[balanceTier];
+    if (keepSlots >= 36) {
+      // Diamond tier: keep everything
+    } else {
+      const newInv = [...inventoryRef.current];
+      // Keep first N slots, clear the rest
+      for (let i = keepSlots; i < newInv.length; i++) {
+        newInv[i] = null;
+      }
+      inventoryRef.current = newInv;
+      setInventory(newInv);
+      if (keepSlots > 0) {
+        setToast(`💀 Kept ${keepSlots} slots (${tierInfo.label} tier perk)`);
+      } else {
+        setToast('💀 All items lost on death!');
+      }
+    }
+
+    if (playerRef.current) {
+      const sp = spawnPointRef.current || { x: 64.5, y: 30, z: 64.5 };
+      playerRef.current.setPosition(sp.x, sp.y, sp.z);
+      playerRef.current.inventoryOpen = false;
+      playerRef.current.breathTimer = 10;
+    }
+  };
+
   // Label for selected item
   const heldSlot = inventory[selectedSlot];
   const heldLabel = heldSlot ? ITEMS[heldSlot.item].label : '';
+  const heldDef = heldSlot ? ITEMS[heldSlot.item] : null;
+
+  // Persist inventory to localStorage
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('bc_inventory', JSON.stringify(inventory));
+    } catch {}
+  }, [inventory]);
+
+  // XP calculation
+  const xpInfo = computeLevel(totalXp);
 
   return (
     <div
@@ -1033,7 +3615,48 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         fps={fps}
         toast={toast}
         invulnerable={invulnerable}
+        tierLabel={tierInfo.label}
+        tierColor={tierInfo.color}
+        xpMultiplier={TIER_XP_MULTIPLIER[balanceTier]}
+        weather={weatherType}
+        biome={currentBiome}
+        playerRotY={playerRef.current?.rotY ?? 0}
+        activePotion={activePotion}
+        potionTimer={potionTimerRef.current}
+        beaconActive={beaconActive}
+        miningCombo={miningComboDisplay}
       />
+
+      {/* On-chain wallet indicator with tier */}
+      {walletAddress && (
+        <div
+          className="pointer-events-auto absolute right-4 top-4 cursor-pointer"
+          onClick={() => setProfileOpen(true)}
+          style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '14px',
+            color: tierInfo.color,
+            textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+            background: 'rgba(0,0,0,0.5)',
+            padding: '6px 10px',
+            border: `1px solid ${tierInfo.color}`,
+            borderRadius: '2px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '12px' }}>{TIER_COSMETICS[balanceTier].namePrefix || '⛓'}</span>
+            <span>{tierInfo.label} Tier</span>
+          </div>
+          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+            {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+          </div>
+          {ethBalance !== undefined && (
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '2px' }}>
+              Ξ {(Number(ethBalance) / 1e18).toFixed(4)}
+            </div>
+          )}
+        </div>
+      )}
 
       <HealthHunger
         health={health}
@@ -1041,6 +3664,270 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         hunger={hunger}
         maxHunger={MAX_HUNGER}
       />
+
+      {/* Armor indicator */}
+      {(armor.helmet || armor.chestplate || armor.leggings || armor.boots) && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            bottom: '118px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'VT323', monospace",
+            fontSize: '14px',
+            color: '#aaddff',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+            display: 'flex',
+            gap: '2px',
+          }}
+        >
+          {[armor.helmet, armor.chestplate, armor.leggings, armor.boots].map((piece, i) => (
+            <span key={i} style={{ opacity: piece ? 1 : 0.3 }}>🛡</span>
+          ))}
+        </div>
+      )}
+
+      {/* Breath bar (shown when underwater) */}
+      {breath < 10 && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            bottom: '130px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'VT323', monospace",
+            fontSize: '14px',
+            display: 'flex',
+            gap: '1px',
+          }}
+        >
+          {Array.from({ length: 10 }, (_, i) => (
+            <span key={i} style={{ opacity: i < breath ? 1 : 0.2, filter: i < breath ? 'none' : 'grayscale(1)' }}>🫧</span>
+          ))}
+        </div>
+      )}
+
+      {/* Shield blocking indicator */}
+      {isBlocking && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            bottom: '145px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'VT323', monospace",
+            fontSize: '16px',
+            color: '#80ff20',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+            background: 'rgba(0,0,0,0.4)',
+            padding: '2px 8px',
+          }}
+        >
+          🛡 BLOCKING
+        </div>
+      )}
+
+      {/* Damage flash overlay — red vignette when hurt */}
+      {damageFlash > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 z-40"
+          style={{
+            background: `radial-gradient(ellipse at center, transparent 40%, rgba(180,0,0,${damageFlash * 0.5}) 100%)`,
+            mixBlendMode: 'multiply',
+          }}
+        />
+      )}
+
+      {/* Underwater tint overlay — blue haze when head is in water */}
+      {isUnderwater && (
+        <div
+          className="pointer-events-none absolute inset-0 z-30"
+          style={{
+            background: 'radial-gradient(ellipse at center, rgba(20,60,140,0.3) 0%, rgba(10,30,80,0.6) 100%)',
+          }}
+        >
+          {/* Animated bubble particles */}
+          <div className="absolute inset-0 overflow-hidden" style={{ opacity: 0.4 }}>
+            {[...Array(12)].map((_, i) => (
+              <div
+                key={i}
+                className="absolute rounded-full"
+                style={{
+                  width: `${3 + (i % 4) * 2}px`,
+                  height: `${3 + (i % 4) * 2}px`,
+                  background: 'rgba(180,220,255,0.6)',
+                  left: `${8 + (i * 7.3) % 84}%`,
+                  bottom: `${-10 + (i * 13) % 20}%`,
+                  animation: `bubbleRise ${3 + (i % 3)}s ease-in infinite`,
+                  animationDelay: `${(i * 0.4) % 3}s`,
+                }}
+              />
+            ))}
+          </div>
+          <style>{`
+            @keyframes bubbleRise {
+              0% { transform: translateY(0) translateX(0); opacity: 0.6; }
+              50% { transform: translateY(-40vh) translateX(${Math.random() > 0.5 ? '' : '-'}10px); opacity: 0.4; }
+              100% { transform: translateY(-100vh) translateX(${Math.random() > 0.5 ? '' : '-'}20px); opacity: 0; }
+            }
+          `}</style>
+        </div>
+      )}
+
+      {/* Low health vignette — permanent red edges when health <= 4 */}
+      {health <= 4 && health > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 z-30 animate-pulse"
+          style={{
+            background: 'radial-gradient(ellipse at center, transparent 50%, rgba(120,0,0,0.3) 100%)',
+            animationDuration: '1.5s',
+          }}
+        />
+      )}
+
+      {/* Cave darkening — subtle dark vignette when deep underground (Y < 12) */}
+      {coords.y < 12 && !isUnderwater && (
+        <div
+          className="pointer-events-none absolute inset-0 z-20"
+          style={{
+            background: `radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,${Math.min(0.5, (12 - coords.y) * 0.04)}) 100%)`,
+          }}
+        />
+      )}
+
+      <XPBar
+        xp={xpInfo.xpInLevel}
+        level={xpInfo.level}
+        xpToNext={xpInfo.xpToNext}
+      />
+
+      {/* Minimap */}
+      <Minimap
+        world={worldRef.current}
+        playerX={coords.x}
+        playerZ={coords.z}
+        playerRotY={playerRef.current?.rotY ?? 0}
+        visible={showMinimap}
+      />
+
+      {/* Kill feed */}
+      {killFeed.length > 0 && (
+        <div className="pointer-events-none absolute right-4 z-20" style={{ top: showMinimap ? '190px' : '56px' }}>
+          <div className="flex flex-col gap-1">
+            {killFeed.filter(k => Date.now() - k.ts < 5000).map(k => (
+              <div
+                key={k.id}
+                style={{
+                  fontFamily: "'VT323', monospace",
+                  fontSize: '14px',
+                  color: '#ff6644',
+                  textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+                  background: 'rgba(0,0,0,0.4)',
+                  padding: '2px 8px',
+                  borderRadius: '2px',
+                  opacity: Math.max(0, 1 - (Date.now() - k.ts) / 5000),
+                  textAlign: 'right',
+                }}
+              >
+                {k.text}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Weather indicator */}
+      {weatherType !== 'clear' && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            top: '4px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'VT323', monospace",
+            fontSize: '14px',
+            color: weatherType === 'thunder' ? '#ffaa44' : '#aaccff',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+            background: 'rgba(0,0,0,0.4)',
+            padding: '2px 8px',
+            borderRadius: '2px',
+          }}
+        >
+          {weatherType === 'rain' ? '🌧️ Rain' : '⛈️ Thunderstorm'}
+        </div>
+      )}
+
+      {/* Compass direction indicator */}
+      {hasCompass && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            top: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'Press Start 2P', monospace",
+            fontSize: '8px',
+            color: 'rgba(255,255,255,0.7)',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+            background: 'rgba(0,0,0,0.35)',
+            padding: '3px 12px',
+            display: 'flex',
+            gap: '8px',
+          }}
+        >
+          {(() => {
+            const rot = playerRef.current?.rotY ?? 0;
+            const deg = (((-rot * 180 / Math.PI) % 360) + 360) % 360;
+            let dir = 'N';
+            if (deg >= 337.5 || deg < 22.5) dir = 'S';
+            else if (deg >= 22.5 && deg < 67.5) dir = 'SW';
+            else if (deg >= 67.5 && deg < 112.5) dir = 'W';
+            else if (deg >= 112.5 && deg < 157.5) dir = 'NW';
+            else if (deg >= 157.5 && deg < 202.5) dir = 'N';
+            else if (deg >= 202.5 && deg < 247.5) dir = 'NE';
+            else if (deg >= 247.5 && deg < 292.5) dir = 'E';
+            else dir = 'SE';
+            return <span>🧭 {dir} {Math.round(deg)}°</span>;
+          })()}
+        </div>
+      )}
+
+      {/* Active potion effect indicator */}
+      {activePotion && (
+        <div
+          className="pointer-events-none absolute"
+          style={{
+            top: '44px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            fontFamily: "'VT323', monospace",
+            fontSize: '12px',
+            color: activePotion === 'potion_speed' ? '#44ccff'
+              : activePotion === 'potion_strength' ? '#cc2222'
+              : activePotion === 'potion_fire_resist' ? '#ff8800'
+              : activePotion === 'potion_night_vision' ? '#aaaaff'
+              : activePotion === 'potion_jump' ? '#44ff44'
+              : '#ffffff',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.8)',
+            background: 'rgba(0,0,0,0.4)',
+            padding: '2px 10px',
+            borderRadius: '2px',
+          }}
+        >
+          🧪 {ITEMS[activePotion as ItemType]?.label ?? 'Potion'} ({Math.ceil(potionTimerRef.current)}s)
+        </div>
+      )}
+
+      {/* Spyglass zoom vignette */}
+      {spyglassActive && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background: 'radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.85) 70%)',
+            borderRadius: '50%',
+          }}
+        />
+      )}
 
       <Hotbar
         slots={inventory.slice(0, HOTBAR_SIZE)}
@@ -1054,6 +3941,66 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
         onOpen={() => setChatOpen(true)}
         onClose={() => setChatOpen(false)}
         onSend={(msg) => {
+          // Chat commands
+          if (msg.startsWith('/')) {
+            const parts = msg.slice(1).split(' ');
+            const cmd = parts[0].toLowerCase();
+
+            if (cmd === 'tp' || cmd === 'teleport') {
+              // /tp x y z — requires bronze tier or higher
+              if (!walletAddress) {
+                appendChat({ username: 'system', message: '⛓️ Connect wallet to use /tp command', isSystem: true });
+                return;
+              }
+              if (balanceTier === 'none') {
+                appendChat({ username: 'system', message: '💰 Need at least Base tier to use /tp', isSystem: true });
+                return;
+              }
+              const tx = parseFloat(parts[1]);
+              const ty = parseFloat(parts[2]);
+              const tz = parseFloat(parts[3]);
+              if (isNaN(tx) || isNaN(ty) || isNaN(tz)) {
+                appendChat({ username: 'system', message: '❌ Usage: /tp x y z', isSystem: true });
+                return;
+              }
+              playerRef.current?.setPosition(tx, ty, tz);
+              appendChat({ username: 'system', message: `✨ Teleported to ${tx.toFixed(0)}, ${ty.toFixed(0)}, ${tz.toFixed(0)}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'time') {
+              const phase = dayPhase;
+              const hour = Math.floor(phase * 24);
+              const minute = Math.floor((phase * 24 - hour) * 60);
+              appendChat({ username: 'system', message: `🕐 Time: ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} (${phase < 0.5 ? 'Day' : 'Night'})`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'seed') {
+              appendChat({ username: 'system', message: `🌱 World Seed: BaseCraft-${Math.floor(Date.now() / 86400000)}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'stats') {
+              const s = statsRef.current;
+              appendChat({ username: 'system', message: `📊 Blocks: ${s.blocksPlaced}P/${s.blocksBroken}B | Mobs: ${s.mobsKilled} | Deaths: ${s.deaths}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'tier') {
+              appendChat({ username: 'system', message: `⛓️ Tier: ${tierInfo.label} | Balance: ${ethBalance !== undefined ? (Number(ethBalance) / 1e18).toFixed(4) : '—'} ETH`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'help') {
+              appendChat({ username: 'system', message: '📖 Commands: /tp x y z, /time, /seed, /stats, /tier, /help', isSystem: true });
+              return;
+            }
+
+            appendChat({ username: 'system', message: `❌ Unknown command: /${cmd}. Type /help for commands.`, isSystem: true });
+            return;
+          }
+
           const socket = getSocket();
           socket.emit('chat:send', { message: msg });
         }}
@@ -1079,11 +4026,26 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
           }}
         >
           {heldLabel}
+          {heldSlot && heldSlot.count > 1 && <span style={{ color: 'rgba(255,255,255,0.5)', marginLeft: '6px' }}>x{heldSlot.count}</span>}
+          {heldSlot?.durability !== undefined && heldDef?.durability && (
+            <span style={{
+              color: heldSlot.durability / heldDef.durability > 0.5 ? '#80ff20' : heldSlot.durability / heldDef.durability > 0.2 ? '#ffcc00' : '#ff4444',
+              marginLeft: '6px',
+              fontSize: '13px',
+            }}>
+              [{heldSlot.durability}/{heldDef.durability}]
+            </span>
+          )}
+          {enchantedItemsRef.current.has(selectedSlot) && (
+            <span style={{ color: '#aa44ff', marginLeft: '6px' }}>✨ {enchantedItemsRef.current.get(selectedSlot)}</span>
+          )}
+          {heldDef?.isFood && <span style={{ color: '#80ff20', marginLeft: '6px' }}>🍖 Right-click to eat</span>}
+          {heldDef?.walletExclusive && <span style={{ color: '#0052ff', marginLeft: '6px' }}>⛓</span>}
         </div>
       )}
 
       {/* Inventory screen */}
-      {inventoryOpen && (
+      {inventoryOpen && !isDead && (
         <InventoryScreen
           inventory={inventory}
           onInventoryChange={(inv) => {
@@ -1092,12 +4054,114 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
           }}
           onCraft={handleCraft}
           nearCraftingTable={nearCraftingTable()}
+          nearFurnace={nearFurnace()}
           onClose={() => {
             setInventoryOpen(false);
             if (playerRef.current) playerRef.current.inventoryOpen = false;
           }}
         />
       )}
+
+      {/* Death screen */}
+      <DeathScreen
+        visible={isDead}
+        onRespawn={handleRespawn}
+        score={xpInfo.level}
+        keepSlots={TIER_KEEP_INVENTORY[balanceTier]}
+        tierLabel={tierInfo.label}
+        tierColor={tierInfo.color}
+      />
+
+      {/* Achievement toast */}
+      <AchievementToast achievement={achievementToast} />
+
+      {/* On-chain panels */}
+      <ProfilePanel
+        visible={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        username={username}
+        walletAddress={walletAddress}
+        balanceTier={tierInfo.label}
+        tierColor={tierInfo.color}
+        ethBalance={ethBalance !== undefined ? (Number(ethBalance) / 1e18).toFixed(4) : '—'}
+        stats={{
+          blocksPlaced: statsRef.current.blocksPlaced,
+          blocksBroken: statsRef.current.blocksBroken,
+          mobsKilled: statsRef.current.mobsKilled,
+          deaths: statsRef.current.deaths,
+          playTimeSeconds: Math.floor(statsRef.current.playTimeSeconds),
+          itemsCrafted: statsRef.current.itemsCrafted,
+          itemsEnchanted: statsRef.current.itemsEnchanted,
+          villagerTrades: statsRef.current.villagerTrades,
+          emeraldsEarned: statsRef.current.emeraldsEarned,
+          distanceWalked: statsRef.current.distanceWalked,
+          highestY: statsRef.current.highestY,
+          longestLifeSeconds: statsRef.current.longestLifeSeconds,
+        }}
+        xpMultiplier={`${TIER_XP_MULTIPLIER[balanceTier]}x`}
+        achievementCount={earnedAchievements.size}
+        totalAchievements={ACHIEVEMENT_DEFS.length}
+        landClaimCount={Array.from(landClaims.values()).filter(c => c.wallet_address === walletAddress).length}
+      />
+
+      <LeaderboardPanel
+        visible={leaderboardOpen}
+        onClose={() => setLeaderboardOpen(false)}
+        entries={leaderboardData}
+        currentUsername={username}
+      />
+
+      <AchievementPanel
+        visible={achievementsOpen}
+        onClose={() => setAchievementsOpen(false)}
+        achievements={ACHIEVEMENT_DEFS}
+        earned={earnedAchievements}
+      />
+
+      <LandClaimPanel
+        visible={landClaimOpen}
+        onClose={() => setLandClaimOpen(false)}
+        currentChunk={getChunkCoords(coords.x, coords.z)}
+        claimStatus={
+          (() => {
+            const { cx, cz } = getChunkCoords(coords.x, coords.z);
+            const claim = landClaims.get(chunkKey(cx, cz));
+            if (!claim) return 'unclaimed' as const;
+            if (walletAddress && claim.wallet_address.toLowerCase() === walletAddress.toLowerCase()) return 'yours' as const;
+            return 'other' as const;
+          })()
+        }
+        claimOwner={
+          (() => {
+            const { cx, cz } = getChunkCoords(coords.x, coords.z);
+            const claim = landClaims.get(chunkKey(cx, cz));
+            return claim?.username;
+          })()
+        }
+        onClaim={() => {
+          const { cx, cz } = getChunkCoords(coords.x, coords.z);
+          getSocket().emit('land:claim', { chunkX: cx, chunkZ: cz });
+        }}
+        onUnclaim={() => {
+          const { cx, cz } = getChunkCoords(coords.x, coords.z);
+          getSocket().emit('land:unclaim', { chunkX: cx, chunkZ: cz });
+        }}
+        yourClaims={Array.from(landClaims.values())
+          .filter(c => walletAddress && c.wallet_address.toLowerCase() === walletAddress.toLowerCase())
+          .map(c => ({ cx: c.chunk_x, cz: c.chunk_z }))}
+        walletConnected={!!walletAddress}
+      />
+
+      <TierPerksPanel
+        visible={tierPerksOpen}
+        onClose={() => setTierPerksOpen(false)}
+        currentTier={tierInfo.label}
+      />
+
+      <ControlsPanel
+        visible={controlsOpen}
+        onClose={() => setControlsOpen(false)}
+      />
 
       {/* WebGL error */}
       {webglError && (
@@ -1167,7 +4231,7 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
       )}
 
       {/* Click-to-play overlay */}
-      {!pointerLocked && !chatOpen && !inventoryOpen && worldLoaded && (
+      {!pointerLocked && !chatOpen && !inventoryOpen && !isDead && worldLoaded && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30">
           <div className="bc-panel px-8 py-6 text-center">
             <div
@@ -1193,9 +4257,10 @@ export default function Game({ username, walletAddress, verifiedBase }: Props) {
               <div><span style={{ color: '#ffff55' }}>MOUSE</span> — Look around</div>
               <div><span style={{ color: '#ffff55' }}>W A S D</span> — Move</div>
               <div><span style={{ color: '#ffff55' }}>SPACE</span> — Jump · <span style={{ color: '#ffff55' }}>SHIFT</span> — Sprint · <span style={{ color: '#ffff55' }}>CTRL</span> — Sneak</div>
-              <div><span style={{ color: '#ffff55' }}>HOLD LEFT CLICK</span> — Mine · <span style={{ color: '#ffff55' }}>RIGHT CLICK</span> — Place</div>
+              <div><span style={{ color: '#ffff55' }}>HOLD LEFT CLICK</span> — Mine / Attack · <span style={{ color: '#ffff55' }}>RIGHT CLICK</span> — Place / Eat</div>
               <div><span style={{ color: '#ffff55' }}>1-9</span> — Select slot · <span style={{ color: '#ffff55' }}>E</span> — Inventory/Craft</div>
               <div><span style={{ color: '#ffff55' }}>F</span> — Fly · <span style={{ color: '#ffff55' }}>T</span> — Chat</div>
+              <div><span style={{ color: '#ffff55' }}>L</span> — Leaderboard · <span style={{ color: '#ffff55' }}>P</span> — Profile · <span style={{ color: '#ffff55' }}>J</span> — Achievements · <span style={{ color: '#ffff55' }}>N</span> — Land</div>
             </div>
           </div>
         </div>

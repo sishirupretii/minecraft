@@ -2,6 +2,7 @@
 
 interface Props {
   coords: { x: number; y: number; z: number };
+  playerRotY?: number;
   showCoords: boolean;
   onlineCount: number;
   worldLoaded: boolean;
@@ -13,10 +14,34 @@ interface Props {
   fps: number | null;     // null = hide counter
   toast: string | null;
   invulnerable: boolean;  // spawn protection visual
+  tierLabel?: string;
+  tierColor?: string;
+  xpMultiplier?: number;
+  weather?: string;
+  biome?: string;
+  activePotion?: string | null;
+  potionTimer?: number;
+  beaconActive?: boolean;
+  miningCombo?: number;
+}
+
+function getCompassDir(rotY?: number): string {
+  if (rotY === undefined) return '';
+  // rotY is in radians, 0 = -Z (south), Math.PI = +Z (north)
+  const deg = ((rotY * 180 / Math.PI) % 360 + 360) % 360;
+  if (deg >= 337.5 || deg < 22.5) return 'S';
+  if (deg >= 22.5 && deg < 67.5) return 'SW';
+  if (deg >= 67.5 && deg < 112.5) return 'W';
+  if (deg >= 112.5 && deg < 157.5) return 'NW';
+  if (deg >= 157.5 && deg < 202.5) return 'N';
+  if (deg >= 202.5 && deg < 247.5) return 'NE';
+  if (deg >= 247.5 && deg < 292.5) return 'E';
+  return 'SE';
 }
 
 export default function HUD({
   coords,
+  playerRotY,
   showCoords,
   onlineCount,
   worldLoaded,
@@ -28,6 +53,15 @@ export default function HUD({
   fps,
   toast,
   invulnerable,
+  tierLabel,
+  tierColor,
+  xpMultiplier,
+  weather,
+  biome,
+  activePotion,
+  potionTimer,
+  beaconActive,
+  miningCombo,
 }: Props) {
   // Sun is up when the sine of sun-angle is positive. See Game.tsx for the
   // matching expression — keep these in sync.
@@ -70,6 +104,7 @@ export default function HUD({
             <span>{coords.y.toFixed(1)}</span>
             <span className="text-white/50">Z</span>
             <span>{coords.z.toFixed(1)}</span>
+            <span className="ml-1 text-[10px] text-yellow-300/50">{getCompassDir(playerRotY)}</span>
             <span className="ml-1 text-[10px] text-white/30">F3</span>
           </div>
         </div>
@@ -125,6 +160,91 @@ export default function HUD({
           </div>
         </div>
       )}
+
+      {/* Tier badge (bottom-left) */}
+      {tierLabel && tierLabel !== 'No Wallet' && (
+        <div className="pointer-events-none absolute bottom-16 left-4">
+          <div
+            className="hud-pill"
+            style={{ borderColor: tierColor || '#888' }}
+          >
+            <span style={{ color: tierColor || '#888', fontSize: '11px', fontWeight: 'bold' }}>
+              {tierLabel}
+            </span>
+            {xpMultiplier && xpMultiplier > 1 && (
+              <span style={{ color: '#ffd700', fontSize: '10px', marginLeft: '4px' }}>
+                {xpMultiplier}x XP
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Weather indicator */}
+      {weather && weather !== 'clear' && (
+        <div className="pointer-events-none absolute left-4 top-24">
+          <div className="hud-pill">
+            <span style={{ fontSize: '12px' }}>
+              {weather === 'rain' ? '🌧' : weather === 'thunder' ? '⛈' : ''}
+            </span>
+            <span className="text-white/50" style={{ fontSize: '10px' }}>
+              {weather === 'rain' ? 'Rain' : weather === 'thunder' ? 'Thunder' : ''}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Biome indicator */}
+      {biome && showCoords && (
+        <div className="pointer-events-none absolute left-4" style={{ top: weather && weather !== 'clear' ? '150px' : '120px' }}>
+          <div className="hud-pill">
+            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)' }}>
+              {biome === 'Desert' ? '🏜' : biome === 'Snowy Tundra' ? '❄' : biome === 'Swamp' ? '🌿' : biome === 'Mountains' ? '⛰' : biome === 'City' ? '🏙' : biome === 'Lush Forest' ? '🌲' : '🌾'}
+            </span>
+            <span className="text-white/50" style={{ fontSize: '10px' }}>
+              {biome}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Active effects (right side, below online count) */}
+      <div className="pointer-events-none absolute right-4 top-16 flex flex-col gap-1">
+        {activePotion && (
+          <div className="hud-pill" style={{ borderColor: '#aa44ff' }}>
+            <span style={{ fontSize: '10px' }}>
+              {activePotion === 'potion_healing' ? '❤️' :
+               activePotion === 'potion_speed' ? '💨' :
+               activePotion === 'potion_strength' ? '💪' :
+               activePotion === 'potion_fire_resist' ? '🔥' :
+               activePotion === 'potion_night_vision' ? '👁' :
+               activePotion === 'potion_jump' ? '🦘' : '🧪'}
+            </span>
+            <span style={{ fontSize: '10px', color: '#cc88ff' }}>
+              {potionTimer ? `${Math.ceil(potionTimer)}s` : ''}
+            </span>
+          </div>
+        )}
+        {beaconActive && (
+          <div className="hud-pill" style={{ borderColor: '#88ffdd' }}>
+            <span style={{ fontSize: '10px' }}>🔦</span>
+            <span style={{ fontSize: '10px', color: '#88ffdd' }}>Beacon</span>
+          </div>
+        )}
+        {miningCombo !== undefined && miningCombo >= 5 && (
+          <div className="hud-pill" style={{ borderColor: '#ff8844' }}>
+            <span style={{ fontSize: '10px' }}>⛏️</span>
+            <span style={{ fontSize: '10px', color: '#ff8844' }}>x{miningCombo}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Keybind hints (bottom-left) */}
+      <div className="pointer-events-none absolute bottom-3 left-4 flex gap-2">
+        <span className="text-[9px] text-white/20" style={{ fontFamily: "'VT323', monospace" }}>
+          F1:Controls E:Inv L:LB P:Profile J:Achieve K:Perks
+        </span>
+      </div>
 
       {/* Watermark */}
       <div className="pointer-events-none absolute bottom-3 right-4 text-[11px] font-semibold tracking-[0.2em] text-white/25">

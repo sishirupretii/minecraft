@@ -23,6 +23,94 @@ const BREAK_TIMES: Record<BlockType, number> = {
   planks: 0.7,
   cobblestone: 1.6,
   crafting_table: 0.9,
+  glass: 0.25,          // glass breaks fast
+  torch: 0.1,           // instant-ish
+  iron_ore: 3.0,        // hard — needs pickaxe
+  diamond_ore: 5.0,     // very hard — needs iron+ pickaxe
+  furnace: 2.0,         // stone-like
+  base_block: 6.0,      // hardest block in game
+  leaves: 0.15,          // fast
+  bedrock: 999,          // unbreakable
+  gravel: 0.4,
+  coal_ore: 2.0,
+  gold_ore: 3.0,
+  obsidian: 50.0,        // very hard — needs diamond pickaxe
+  lava: 999,             // can't mine lava
+  wool: 0.2,
+  bricks: 1.4,
+  bookshelf: 0.7,
+  ladder: 0.3,
+  chest: 0.9,
+  bronze_block: 6.0,
+  silver_block: 7.0,
+  gold_block: 8.0,
+  crystal_block: 10.0,
+  tnt: 0.4,
+  bed: 0.5,
+  campfire: 0.8,
+  farmland: 0.4,
+  wheat: 0.1,
+  oak_door: 0.6,
+  trapdoor: 0.5,
+  brewing_stand: 1.2,
+  noteblock: 0.5,
+  jukebox: 0.8,
+  sign: 0.3,
+  red_wool: 0.2,
+  blue_wool: 0.2,
+  green_wool: 0.2,
+  yellow_wool: 0.2,
+  black_wool: 0.2,
+  // ---- New blocks: Batch 3 ----
+  lantern: 0.4,
+  fence: 0.6,
+  cactus: 0.5,
+  pumpkin: 0.6,
+  jack_o_lantern: 0.6,
+  mushroom_red: 0.1,
+  mushroom_brown: 0.1,
+  lever: 0.3,
+  anvil: 3.0,
+  enchanting_table: 2.5,
+  hay_bale: 0.3,
+  barrel: 0.8,
+  beacon: 3.0,
+  banner: 0.2,
+  // ---- Batch 5 blocks ----
+  iron_block: 3.0,
+  diamond_block: 5.0,
+  stone_bricks: 1.5,
+  mossy_cobblestone: 1.6,
+  clay: 0.5,
+  terracotta: 0.8,
+  soul_sand: 0.4,
+  glowstone: 0.4,
+  prismarine: 1.5,
+  sea_lantern: 0.5,
+  nether_bricks: 2.0,
+  end_stone: 3.0,
+  nether_portal: 99.0,
+  redstone_lamp: 0.5,
+  sponge: 0.5,
+  melon: 0.3,
+  // ---- Batch 9: Biome blocks ----
+  moss_block: 0.3,
+  vine: 0.2,
+  lily_pad: 0.1,
+  mud: 0.4,
+  birch_wood: 1.0,
+  birch_leaves: 0.15,
+  dark_oak_wood: 1.2,
+  dark_oak_leaves: 0.15,
+  water: 99.0,
+  sugar_cane: 0.1,
+  packed_ice: 1.0,
+  snow_block: 0.3,
+  emerald_ore: 2.5,
+  copper_ore: 1.5,
+  amethyst: 1.5,
+  deepslate: 2.5,
+  calcite: 0.8,
 };
 
 // Fall damage: >3 blocks fall = 1 HP per extra block.
@@ -40,6 +128,9 @@ const SNEAK_SPEED = 1.8;
 const FLY_SPEED = 10;
 const JUMP_VELOCITY = 8.0;
 const GRAVITY = 22;
+const WATER_GRAVITY = 5;
+const WATER_WALK_SPEED = 2.0;
+const SEA_LEVEL = 4;
 
 export class PlayerController {
   public camera: THREE.PerspectiveCamera;
@@ -57,6 +148,12 @@ export class PlayerController {
   private pointerLocked = false;
   private isGrounded = false;
   public flying = false;
+  /** Multiplied into walk/sprint speed — potions set this from Game.tsx */
+  public speedMultiplier = 1.0;
+  /** Multiplied into jump velocity — potions set this from Game.tsx */
+  public jumpMultiplier = 1.0;
+  /** Multiplied into mining speed — tier bonus from Game.tsx */
+  public miningSpeedMultiplier = 1.0;
 
   private lastSpaceTap = 0;
 
@@ -81,8 +178,27 @@ export class PlayerController {
   // Accessor for the held tool's break multiplier. Game.tsx sets this so
   // the player reads current tool data from the inventory ref.
   public getHeldToolDef: (() => ItemDef | null) | null = null;
+  public onDrown: ((damage: number) => void) | null = null;
+  public onLavaDamage: ((damage: number) => void) | null = null;
+  public onDropItem: (() => void) | null = null;
+  public onVoidDeath: (() => void) | null = null;
+  public hungerLevel = 20;
   public chatOpen = false;
   public inventoryOpen = false; // blocks movement/input while open
+
+  // --- Swimming / drowning ---
+  public isSwimming = false;
+  public breathTimer = 10; // 10 seconds of air
+  private drownTickTimer = 0; // fires damage every 1s when out of air
+
+  // --- Lava damage ---
+  private lavaDamageTimer = 0;
+
+  // --- Attack cooldown ---
+  public attackCooldown = 0;
+
+  // --- Ladder climbing ---
+  public isOnLadder = false;
 
   // --- Hold-to-break state ---
   private mouseDownLeft = false;
@@ -196,6 +312,11 @@ export class PlayerController {
         return;
       }
 
+      if (k === 'q' && !this.chatOpen && !this.inventoryOpen) {
+        if (this.onDropItem) this.onDropItem();
+        return;
+      }
+
       if (k === 'tab') {
         e.preventDefault();
         if (this.onTabDown) this.onTabDown(true);
@@ -212,8 +333,10 @@ export class PlayerController {
         // For fly mode, just hold space (handled in update).
         if (this.flying) {
           // no-op, handled by update
+        } else if (this.isSwimming || this.isOnLadder) {
+          // handled in update via keys
         } else if (this.isGrounded) {
-          this.velocity.y = JUMP_VELOCITY;
+          this.velocity.y = JUMP_VELOCITY * this.jumpMultiplier;
           this.isGrounded = false;
           if (this.onJump) this.onJump();
         }
@@ -347,6 +470,19 @@ export class PlayerController {
     return 0;
   }
 
+  /** True if the player's feet are below water level. */
+  public isInWater(): boolean {
+    return this.position.y < SEA_LEVEL;
+  }
+
+  public canAttack(): boolean {
+    return this.attackCooldown <= 0;
+  }
+
+  public resetAttackCooldown() {
+    this.attackCooldown = 0.5;
+  }
+
   update(dt: number) {
     if (dt > 0.1) dt = 0.1;
     if (this.inventoryOpen) return; // freeze movement while inventory is open
@@ -373,15 +509,29 @@ export class PlayerController {
     // Ctrl = sneak. Takes precedence over shift (sprint) so holding both
     // results in sneak — matches the intuitive "slow and careful" read.
     const sneaking = !!this.keys['control'];
-    const sprinting = !!this.keys['shift'] && !sneaking;
-    const speed = this.flying
+    const sprinting = !!this.keys['shift'] && !sneaking && this.hungerLevel >= 6;
+
+    // --- Ladder detection ---
+    const feetBX = Math.floor(this.position.x);
+    const feetBY = Math.floor(this.position.y);
+    const feetBZ = Math.floor(this.position.z);
+    const blockAtFeet = this.world.getType(feetBX, feetBY, feetBZ);
+    this.isOnLadder = blockAtFeet === 'ladder';
+
+    // --- Swimming detection ---
+    this.isSwimming = this.isInWater();
+
+    // Determine effective walk speed
+    let speed = this.flying
       ? FLY_SPEED
-      : sneaking
-        ? SNEAK_SPEED
-        : sprinting
-          ? SPRINT_SPEED
-          : WALK_SPEED;
-    dir.normalize().multiplyScalar(speed);
+      : this.isSwimming
+        ? WATER_WALK_SPEED
+        : sneaking
+          ? SNEAK_SPEED
+          : sprinting
+            ? SPRINT_SPEED
+            : WALK_SPEED;
+    dir.normalize().multiplyScalar(speed * this.speedMultiplier);
 
     if (this.flying) {
       this.velocity.x = dir.x;
@@ -390,6 +540,26 @@ export class PlayerController {
       if (this.keys[' ']) vy += FLY_SPEED;
       if (this.keys['shift']) vy -= FLY_SPEED;
       this.velocity.y = vy;
+    } else if (this.isOnLadder) {
+      // Ladder climbing: cancel gravity, W = up, S = down, else hover
+      this.velocity.x = dir.x;
+      this.velocity.z = dir.z;
+      if (!this.chatOpen && this.keys['w']) {
+        this.velocity.y = 3;
+      } else if (!this.chatOpen && this.keys['s']) {
+        this.velocity.y = -3;
+      } else {
+        this.velocity.y = 0;
+      }
+    } else if (this.isSwimming) {
+      // Swimming: reduced gravity, space = swim up
+      this.velocity.x = dir.x;
+      this.velocity.z = dir.z;
+      this.velocity.y -= WATER_GRAVITY * dt;
+      if (!this.chatOpen && this.keys[' ']) {
+        this.velocity.y = 3;
+      }
+      if (this.velocity.y < -10) this.velocity.y = -10;
     } else {
       this.velocity.x = dir.x;
       this.velocity.z = dir.z;
@@ -467,6 +637,43 @@ export class PlayerController {
       }
     }
 
+    // ---- Drowning ----
+    if (this.isSwimming) {
+      // Head underwater check: position.y + EYE_HEIGHT < SEA_LEVEL
+      const headUnderwater = this.position.y + EYE_HEIGHT < SEA_LEVEL;
+      if (headUnderwater) {
+        this.breathTimer -= dt;
+        if (this.breathTimer <= 0) {
+          this.drownTickTimer += dt;
+          if (this.drownTickTimer >= 1) {
+            this.drownTickTimer -= 1;
+            if (this.onDrown) this.onDrown(2);
+          }
+        }
+      }
+    } else {
+      // Out of water — reset breath
+      this.breathTimer = 10;
+      this.drownTickTimer = 0;
+    }
+
+    // ---- Lava damage ----
+    if (blockAtFeet === 'lava') {
+      this.lavaDamageTimer += dt;
+      if (this.lavaDamageTimer >= 0.5) {
+        this.lavaDamageTimer -= 0.5;
+        if (this.onLavaDamage) this.onLavaDamage(4);
+      }
+    } else {
+      this.lavaDamageTimer = 0;
+    }
+
+    // ---- Attack cooldown ----
+    if (this.attackCooldown > 0) {
+      this.attackCooldown -= dt;
+      if (this.attackCooldown < 0) this.attackCooldown = 0;
+    }
+
     // Footstep: once grounded and horizontally moving, let audio engine
     // rate-limit actual playback (it caps at 1 per 380 ms).
     const horizMoving = Math.abs(this.velocity.x) + Math.abs(this.velocity.z) > 0.5;
@@ -482,11 +689,15 @@ export class PlayerController {
       this.position.z,
     );
 
-    // Fall safety: if far below, respawn
+    // Fall safety: if far below, trigger void death
     if (this.position.y < -20) {
-      // Let Game handle via onChange; simply clamp for now
-      this.position.y = 40;
-      this.velocity.set(0, 0, 0);
+      if (this.onVoidDeath) {
+        this.onVoidDeath();
+      } else {
+        // Fallback: teleport back up if no handler attached
+        this.position.y = 40;
+        this.velocity.set(0, 0, 0);
+      }
     }
 
     // ---- Hold-to-break ----
@@ -519,6 +730,8 @@ export class PlayerController {
         if (toolDef && toolDef.breakMultiplier && type && toolDef.breakMultiplier[type]) {
           breakTime *= toolDef.breakMultiplier[type]!;
         }
+        // Apply tier-based mining speed bonus
+        breakTime /= this.miningSpeedMultiplier;
         this.breakProgress += dt / breakTime;
         if (this.breakProgress >= 1) {
           // Done — fire the break, reset for the next block.

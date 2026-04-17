@@ -21,15 +21,104 @@ const INITIAL_CAPACITY = 40000;
 // Physically-based material params per block type. Standard materials give us
 // real shading under the sun + rim light, instead of flat plastic look.
 const MATERIAL_PARAMS: Record<BlockType, { roughness: number; metalness: number }> = {
-  base_blue:   { roughness: 0.85, metalness: 0 },    // grass — matte, no sheen
-  deep_blue:   { roughness: 0.95, metalness: 0 },    // dirt — fully matte
-  ice_stone:   { roughness: 0.55, metalness: 0.05 }, // snow — subtle sparkle
-  cyan_wood:   { roughness: 0.82, metalness: 0 },    // oak wood — rough grain
-  sand_blue:   { roughness: 0.95, metalness: 0 },    // sand — dusty matte
-  royal_brick: { roughness: 0.88, metalness: 0 },    // stone — rough
-  planks:      { roughness: 0.8,  metalness: 0 },    // wooden planks — smooth grain
-  cobblestone: { roughness: 0.92, metalness: 0 },    // cobblestone — very rough
-  crafting_table: { roughness: 0.75, metalness: 0 },  // crafting table — polished wood
+  base_blue:      { roughness: 0.85, metalness: 0 },     // grass — matte, no sheen
+  deep_blue:      { roughness: 0.95, metalness: 0 },     // dirt — fully matte
+  ice_stone:      { roughness: 0.55, metalness: 0.05 },  // snow — subtle sparkle
+  cyan_wood:      { roughness: 0.82, metalness: 0 },     // oak wood — rough grain
+  sand_blue:      { roughness: 0.95, metalness: 0 },     // sand — dusty matte
+  royal_brick:    { roughness: 0.88, metalness: 0 },     // stone — rough
+  planks:         { roughness: 0.8,  metalness: 0 },     // wooden planks — smooth grain
+  cobblestone:    { roughness: 0.92, metalness: 0 },     // cobblestone — very rough
+  crafting_table: { roughness: 0.75, metalness: 0 },     // crafting table — polished wood
+  glass:          { roughness: 0.1,  metalness: 0.1 },   // glass — very smooth, slightly reflective
+  torch:          { roughness: 0.7,  metalness: 0 },     // torch — rough wood
+  iron_ore:       { roughness: 0.8,  metalness: 0.15 },  // iron ore — slight metallic speckle
+  diamond_ore:    { roughness: 0.7,  metalness: 0.2 },   // diamond ore — shiny flecks
+  furnace:        { roughness: 0.9,  metalness: 0.05 },  // furnace — rough stone
+  base_block:     { roughness: 0.3,  metalness: 0.6 },   // base block — polished metallic blue
+  leaves:         { roughness: 0.9,  metalness: 0 },     // leaves — matte foliage
+  bedrock:        { roughness: 0.95, metalness: 0.1 },   // bedrock — rough dark
+  gravel:         { roughness: 0.92, metalness: 0 },     // gravel — gritty matte
+  coal_ore:       { roughness: 0.85, metalness: 0.05 },  // coal ore — dull speckle
+  gold_ore:       { roughness: 0.75, metalness: 0.3 },   // gold ore — golden sheen
+  obsidian:       { roughness: 0.2,  metalness: 0.4 },   // obsidian — shiny dark
+  lava:           { roughness: 0.6,  metalness: 0.1 },   // lava — molten glow
+  wool:           { roughness: 0.98, metalness: 0 },     // wool — soft matte
+  bricks:         { roughness: 0.88, metalness: 0 },     // bricks — rough clay
+  bookshelf:      { roughness: 0.78, metalness: 0 },     // bookshelf — polished wood
+  ladder:         { roughness: 0.82, metalness: 0 },     // ladder — wood grain
+  chest:          { roughness: 0.75, metalness: 0.05 },  // chest — slight sheen
+  // ---- Tier-gated blocks ----
+  bronze_block:   { roughness: 0.4,  metalness: 0.6 },   // bronze — warm metallic
+  silver_block:   { roughness: 0.25, metalness: 0.7 },   // silver — polished metallic
+  gold_block:     { roughness: 0.2,  metalness: 0.8 },   // gold — highly polished
+  crystal_block:  { roughness: 0.1,  metalness: 0.9 },   // crystal — mirror-like
+  tnt:            { roughness: 0.85, metalness: 0 },     // tnt — papery
+  bed:            { roughness: 0.92, metalness: 0 },     // bed — soft fabric
+  campfire:       { roughness: 0.75, metalness: 0 },     // campfire — woody
+  farmland:       { roughness: 0.95, metalness: 0 },     // farmland — tilled earth
+  wheat:          { roughness: 0.9,  metalness: 0 },     // wheat — organic
+  oak_door:       { roughness: 0.78, metalness: 0 },     // oak door — smooth wood
+  trapdoor:       { roughness: 0.80, metalness: 0 },     // trapdoor — wood grain
+  brewing_stand:  { roughness: 0.70, metalness: 0.1 },   // brewing stand — glass+stone
+  noteblock:      { roughness: 0.80, metalness: 0 },     // noteblock — polished wood
+  jukebox:        { roughness: 0.75, metalness: 0.05 },  // jukebox — polished wood
+  sign:           { roughness: 0.80, metalness: 0 },     // sign — planks
+  red_wool:       { roughness: 0.98, metalness: 0 },     // colored wool — soft matte
+  blue_wool:      { roughness: 0.98, metalness: 0 },
+  green_wool:     { roughness: 0.98, metalness: 0 },
+  yellow_wool:    { roughness: 0.98, metalness: 0 },
+  black_wool:     { roughness: 0.98, metalness: 0 },
+  // ---- New blocks: Batch 3 ----
+  lantern:          { roughness: 0.4,  metalness: 0.3 },   // lantern — metal + glass
+  fence:            { roughness: 0.82, metalness: 0 },     // fence — wood grain
+  cactus:           { roughness: 0.85, metalness: 0 },     // cactus — organic matte
+  pumpkin:          { roughness: 0.88, metalness: 0 },     // pumpkin — organic
+  jack_o_lantern:   { roughness: 0.85, metalness: 0 },     // jack o lantern — organic
+  mushroom_red:     { roughness: 0.9,  metalness: 0 },     // mushroom — organic matte
+  mushroom_brown:   { roughness: 0.92, metalness: 0 },     // mushroom — organic matte
+  lever:            { roughness: 0.75, metalness: 0.1 },   // lever — wood + stone
+  anvil:            { roughness: 0.5,  metalness: 0.7 },   // anvil — heavy iron
+  enchanting_table: { roughness: 0.3,  metalness: 0.5 },   // enchanting — polished obsidian
+  hay_bale:   { roughness: 0.92, metalness: 0 },     // hay bale — dry organic
+  barrel:     { roughness: 0.78, metalness: 0 },     // barrel — polished wood
+  beacon:     { roughness: 0.15, metalness: 0.6 },   // beacon — glassy metallic
+  banner:     { roughness: 0.9,  metalness: 0 },     // banner — fabric
+  // ---- Batch 5 blocks ----
+  iron_block:       { roughness: 0.35, metalness: 0.7 },   // iron block — polished metal
+  diamond_block:    { roughness: 0.15, metalness: 0.8 },   // diamond block — very shiny
+  stone_bricks:     { roughness: 0.85, metalness: 0 },     // stone bricks — rough
+  mossy_cobblestone:{ roughness: 0.9,  metalness: 0 },     // mossy — damp rough
+  clay:             { roughness: 0.88, metalness: 0 },     // clay — smooth matte
+  terracotta:       { roughness: 0.82, metalness: 0 },     // terracotta — earthy
+  soul_sand:        { roughness: 0.95, metalness: 0 },     // soul sand — grainy
+  glowstone:        { roughness: 0.4,  metalness: 0.2 },   // glowstone — luminous
+  prismarine:       { roughness: 0.5,  metalness: 0.3 },   // prismarine — aquatic sheen
+  sea_lantern:      { roughness: 0.2,  metalness: 0.4 },   // sea lantern — glassy
+  nether_bricks:    { roughness: 0.88, metalness: 0.05 },  // nether bricks — dark rough
+  end_stone:        { roughness: 0.8,  metalness: 0.05 },  // end stone — alien
+  nether_portal:    { roughness: 0.1,  metalness: 0.5 },   // nether portal — glassy
+  redstone_lamp:    { roughness: 0.3,  metalness: 0.3 },   // redstone lamp — warm glass
+  sponge:           { roughness: 0.95, metalness: 0 },     // sponge — porous
+  melon:            { roughness: 0.85, metalness: 0 },     // melon — organic
+  // ---- Batch 9: Biome blocks ----
+  moss_block:       { roughness: 0.95, metalness: 0 },     // moss — soft organic
+  vine:             { roughness: 0.9,  metalness: 0 },     // vine — leafy
+  lily_pad:         { roughness: 0.85, metalness: 0 },     // lily pad — waxy
+  mud:              { roughness: 0.95, metalness: 0 },     // mud — wet earth
+  birch_wood:       { roughness: 0.75, metalness: 0 },     // birch — smooth bark
+  birch_leaves:     { roughness: 0.85, metalness: 0 },     // birch leaves — organic
+  dark_oak_wood:    { roughness: 0.8,  metalness: 0 },     // dark oak — rough bark
+  dark_oak_leaves:  { roughness: 0.85, metalness: 0 },     // dark oak leaves
+  water:            { roughness: 0.05, metalness: 0.1 },   // water — reflective
+  sugar_cane:       { roughness: 0.8,  metalness: 0 },     // sugar cane — plant
+  packed_ice:       { roughness: 0.1,  metalness: 0.05 },  // packed ice — smooth
+  snow_block:       { roughness: 0.6,  metalness: 0 },     // snow — matte
+  emerald_ore:      { roughness: 0.5,  metalness: 0.3 },   // emerald ore
+  copper_ore:       { roughness: 0.55, metalness: 0.35 },  // copper ore
+  amethyst:         { roughness: 0.2,  metalness: 0.4 },   // amethyst — glossy crystal
+  deepslate:        { roughness: 0.7,  metalness: 0.1 },   // deepslate — heavy stone
+  calcite:          { roughness: 0.55, metalness: 0 },     // calcite — chalky
 };
 
 // Deterministic per-position color jitter. Same block at same coord always
@@ -63,6 +152,7 @@ export class WorldRenderer {
   // Callback fires after a block is removed, so Game can spawn break particles
   // without this file needing to know about the particle system.
   public onBlockBroken: ((x: number, y: number, z: number, type: BlockType) => void) | null = null;
+  public onBlockPlaced: ((x: number, y: number, z: number, type: BlockType) => void) | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -76,11 +166,23 @@ export class WorldRenderer {
       // MeshStandardMaterial receives light from our new lighting rig.
       // InstancedMesh multiplies the material colour by the per-instance
       // colour set with setColorAt, so we leave material.color white.
-      const material = new THREE.MeshStandardMaterial({
+      const matOptions: THREE.MeshStandardMaterialParameters = {
         color: 0xffffff,
         roughness: params.roughness,
         metalness: params.metalness,
-      });
+      };
+      // Glass: transparent material
+      if (meta.transparent) {
+        matOptions.transparent = true;
+        matOptions.opacity = 0.35;
+        matOptions.side = THREE.DoubleSide;
+      }
+      // Emissive blocks (torch, base_block, tier-gated blocks)
+      if (meta.emissive) {
+        matOptions.emissive = new THREE.Color(meta.emissive);
+        matOptions.emissiveIntensity = meta.emissiveIntensity ?? 0.8;
+      }
+      const material = new THREE.MeshStandardMaterial(matOptions);
       const mesh = new THREE.InstancedMesh(geometry, material, INITIAL_CAPACITY);
       mesh.count = 0;
       mesh.castShadow = true;
@@ -170,6 +272,8 @@ export class WorldRenderer {
         index: idx,
         type,
       });
+      // Fire place callback for particles
+      if (this.onBlockPlaced) this.onBlockPlaced(x, y, z, type);
     }
   }
 

@@ -6,7 +6,7 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { base } from 'wagmi/chains';
 
 interface Props {
-  onLogin: (username: string, wallet?: string, verifiedBase?: boolean) => void;
+  onLogin: (username: string, wallet?: string, verifiedBase?: boolean, ethBalance?: bigint) => void;
 }
 
 function shortWallet(addr: string): string {
@@ -70,7 +70,7 @@ export default function LoginScreen({ onLogin }: Props) {
       return;
     }
     setLoading(true);
-    onLogin(shortWallet(address), address, verifiedBase);
+    onLogin(shortWallet(address), address, verifiedBase, balance?.value);
   }
 
   return (

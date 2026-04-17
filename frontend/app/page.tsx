@@ -31,6 +31,7 @@ interface Session {
   username: string;
   wallet?: string;
   verifiedBase?: boolean;
+  ethBalance?: bigint;
 }
 
 export default function Home() {
@@ -38,7 +39,7 @@ export default function Home() {
   if (!session) {
     return (
       <LoginScreen
-        onLogin={(u, w, v) => setSession({ username: u, wallet: w, verifiedBase: v })}
+        onLogin={(u, w, v, bal) => setSession({ username: u, wallet: w, verifiedBase: v, ethBalance: bal })}
       />
     );
   }
@@ -47,6 +48,7 @@ export default function Home() {
       username={session.username}
       walletAddress={session.wallet}
       verifiedBase={session.verifiedBase}
+      ethBalance={session.ethBalance}
     />
   );
 }
