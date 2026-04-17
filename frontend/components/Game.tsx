@@ -674,8 +674,36 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const rainMesh = new THREE.Points(rainGeom, rainMat);
     rainMesh.visible = false;
     scene.add(rainMesh);
+
+    // Snow particle system
+    const snowCount = 400;
+    const snowGeom = new THREE.BufferGeometry();
+    const snowPositions = new Float32Array(snowCount * 3);
+    for (let i = 0; i < snowCount; i++) {
+      snowPositions[i * 3 + 0] = (Math.random() - 0.5) * 60;
+      snowPositions[i * 3 + 1] = Math.random() * 30 + 10;
+      snowPositions[i * 3 + 2] = (Math.random() - 0.5) * 60;
+    }
+    snowGeom.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
+    const snowMat = new THREE.PointsMaterial({
+      color: 0xffffff, size: 0.18, transparent: true, opacity: 0.85,
+      depthWrite: false, sizeAttenuation: true,
+    });
+    const snowMesh = new THREE.Points(snowGeom, snowMat);
+    snowMesh.visible = false;
+    scene.add(snowMesh);
+
+    // Lightning bolt visual
+    const boltGeom = new THREE.BufferGeometry();
+    const boltMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2, transparent: true, opacity: 0.9 });
+    const boltLine = new THREE.Line(boltGeom, boltMat);
+    boltLine.visible = false;
+    scene.add(boltLine);
+    let boltTimer = 0;
+
     let currentWeather: 'clear' | 'rain' | 'thunder' = 'clear';
     let lightningFlashTimer = 0;
+    let rainSoundTimer = 0;
 
     // World + players + mobs
     const world = new WorldRenderer(scene);
@@ -3115,7 +3143,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           lMat.dispose();
           lGeom.dispose();
         }, 200);
-        audio.playBlockBreak('cobblestone'); // thunder sound
+        audio.playThunder();
       }
 
       // ---- Compass check: if player has compass in inventory ----
@@ -3321,7 +3349,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               life: 0.4 + Math.random() * 0.3,
             });
           }
-          audio.playBlockBreak('sand_blue');
+          audio.playSplash();
         }
       }
       // Underwater fog: drastically reduce visibility
@@ -3428,32 +3456,81 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       {
         const wt = weatherRef.current;
         if (wt !== currentWeather) currentWeather = wt;
-        rainMesh.visible = wt !== 'clear';
+        const isSnowy = currentBiomeRef.current === 'Snowy Tundra';
+        // Show rain or snow based on biome
+        rainMesh.visible = wt !== 'clear' && !isSnowy;
+        snowMesh.visible = wt !== 'clear' && isSnowy;
         if (wt !== 'clear') {
-          const pos = rainGeom.attributes.position as THREE.BufferAttribute;
-          for (let i = 0; i < rainCount; i++) {
-            pos.array[i * 3 + 1] -= dt * 18;
-            if (pos.array[i * 3 + 1] < 0) {
-              pos.array[i * 3 + 0] = camera.position.x + (Math.random() - 0.5) * 80;
-              pos.array[i * 3 + 1] = camera.position.y + 20 + Math.random() * 20;
-              pos.array[i * 3 + 2] = camera.position.z + (Math.random() - 0.5) * 80;
+          if (isSnowy) {
+            // Snow falls slowly with gentle drift
+            const spos = snowGeom.attributes.position as THREE.BufferAttribute;
+            for (let i = 0; i < snowCount; i++) {
+              spos.array[i * 3 + 0] += Math.sin(elapsed + i) * dt * 0.5; // horizontal drift
+              spos.array[i * 3 + 1] -= dt * 3; // slow fall
+              spos.array[i * 3 + 2] += Math.cos(elapsed + i * 1.3) * dt * 0.3;
+              if (spos.array[i * 3 + 1] < 0) {
+                spos.array[i * 3 + 0] = camera.position.x + (Math.random() - 0.5) * 60;
+                spos.array[i * 3 + 1] = camera.position.y + 15 + Math.random() * 15;
+                spos.array[i * 3 + 2] = camera.position.z + (Math.random() - 0.5) * 60;
+              }
             }
+            spos.needsUpdate = true;
+          } else {
+            // Rain falls fast
+            const pos = rainGeom.attributes.position as THREE.BufferAttribute;
+            for (let i = 0; i < rainCount; i++) {
+              pos.array[i * 3 + 1] -= dt * 18;
+              if (pos.array[i * 3 + 1] < 0) {
+                pos.array[i * 3 + 0] = camera.position.x + (Math.random() - 0.5) * 80;
+                pos.array[i * 3 + 1] = camera.position.y + 20 + Math.random() * 20;
+                pos.array[i * 3 + 2] = camera.position.z + (Math.random() - 0.5) * 80;
+              }
+            }
+            pos.needsUpdate = true;
           }
-          pos.needsUpdate = true;
-          // Thunder: random lightning flash
+
+          // Rain/storm ambient sound
+          rainSoundTimer -= dt;
+          if (rainSoundTimer <= 0) {
+            audio.playCaveDrip(); // reuse drip for rain ambiance
+            rainSoundTimer = isSnowy ? 1.5 : 0.3 + Math.random() * 0.4;
+          }
+
+          // Thunder: random lightning flash + bolt visual
           if (wt === 'thunder') {
             if (lightningFlashTimer <= 0 && Math.random() < 0.002) {
               lightningFlashTimer = 0.15;
-              // Lightning damage at random nearby spot
+              // Generate lightning bolt visual
               const lx = camera.position.x + (Math.random() - 0.5) * 40;
               const lz = camera.position.z + (Math.random() - 0.5) * 40;
+              const boltPts: number[] = [];
+              let bx = lx, by = camera.position.y + 30, bz = lz;
+              const segments = 6 + Math.floor(Math.random() * 4);
+              for (let s = 0; s <= segments; s++) {
+                boltPts.push(bx, by, bz);
+                bx += (Math.random() - 0.5) * 3;
+                by -= (30 / segments);
+                bz += (Math.random() - 0.5) * 3;
+              }
+              boltGeom.setAttribute('position', new THREE.Float32BufferAttribute(boltPts, 3));
+              boltLine.visible = true;
+              boltTimer = 0.12;
+
+              // Lightning damage at random nearby spot
               const ldist = Math.sqrt(
                 (lx - camera.position.x) ** 2 + (lz - camera.position.z) ** 2
               );
               if (ldist < 5) {
-                applyMobDamage(5, 'Struck by lightning'); // lightning strike near player
+                applyMobDamage(5, 'Struck by lightning');
               }
             }
+          }
+          // Bolt fade
+          if (boltTimer > 0) {
+            boltTimer -= dt;
+            (boltMat as THREE.LineBasicMaterial).opacity = boltTimer / 0.12;
+          } else {
+            boltLine.visible = false;
           }
           if (lightningFlashTimer > 0) {
             lightningFlashTimer -= dt;
@@ -3464,6 +3541,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         } else {
           ambient.intensity = 0.3;
           lightningFlashTimer = 0;
+          snowMesh.visible = false;
+          boltLine.visible = false;
         }
       }
 

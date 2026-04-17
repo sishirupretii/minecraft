@@ -527,6 +527,48 @@ export class AudioEngine {
     });
   }
 
+  /** Play thunder rumble */
+  playThunder() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Low rumble with noise
+    const buf = this.makeNoiseBuffer(1.2, true);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(150, now);
+    filter.frequency.linearRampToValueAtTime(80, now + 1.0);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.linearRampToValueAtTime(0.08, now + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+    src.connect(filter).connect(gain).connect(this.masterGain!);
+    src.start(now);
+    src.stop(now + 1.2);
+  }
+
+  /** Play splash sound */
+  playSplash() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const buf = this.makeNoiseBuffer(0.3, true);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.Q.setValueAtTime(1, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    src.connect(filter).connect(gain).connect(this.masterGain!);
+    src.start(now);
+    src.stop(now + 0.3);
+  }
+
   dispose() {
     if (this.musicInterval) {
       clearInterval(this.musicInterval);
