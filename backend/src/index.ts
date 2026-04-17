@@ -24,11 +24,27 @@ async function main() {
   app.use(express.json());
 
   app.get('/', (_req, res) => {
-    res.json({ ok: true, name: 'BaseCraft backend', version: '1.0.0' });
+    res.json({
+      ok: true,
+      name: 'BasedCraft backend',
+      version: '1.1.0',
+      features: {
+        arena: true,
+        store: true,
+        burns: true,
+        holderTiers: true,
+      },
+      builtAt: '2026-04-18T-arena',
+    });
   });
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, worldReady: world.isReady() });
+    res.json({
+      ok: true,
+      worldReady: world.isReady(),
+      features: ['arena', 'store', 'burns', 'holder-tiers'],
+      version: '1.1.0',
+    });
   });
 
   const server = http.createServer(app);
