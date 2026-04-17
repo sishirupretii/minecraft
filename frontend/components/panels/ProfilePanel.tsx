@@ -24,6 +24,10 @@ interface Props {
     distanceWalked?: number;
     highestY?: number;
     longestLifeSeconds?: number;
+    fishCaught?: number;
+    foodEaten?: number;
+    maxKillStreak?: number;
+    currentLevel?: number;
   };
   xpMultiplier?: string;
   achievementCount: number;
@@ -73,17 +77,24 @@ export default function ProfilePanel({
     ? Math.round((achievementCount / totalAchievements) * 100)
     : 0;
 
+  const kd = stats.deaths > 0 ? (stats.mobsKilled / stats.deaths).toFixed(1) : stats.mobsKilled > 0 ? 'Perfect' : '0.0';
+
   const statItems: Array<{ label: string; value: string | number }> = [
-    { label: 'Blocks Placed', value: stats.blocksPlaced },
-    { label: 'Blocks Broken', value: stats.blocksBroken },
-    { label: 'Mobs Killed', value: stats.mobsKilled },
-    { label: 'Deaths', value: stats.deaths },
+    { label: 'Level', value: stats.currentLevel ?? 0 },
     { label: 'Play Time', value: formatPlayTime(stats.playTimeSeconds) },
+    { label: 'Blocks Placed', value: stats.blocksPlaced.toLocaleString() },
+    { label: 'Blocks Broken', value: stats.blocksBroken.toLocaleString() },
+    { label: 'Mobs Killed', value: stats.mobsKilled.toLocaleString() },
+    { label: 'Deaths', value: stats.deaths },
+    { label: 'K/D Ratio', value: kd },
+    { label: 'Best Streak', value: `${stats.maxKillStreak ?? 0} kills` },
     { label: 'Items Crafted', value: stats.itemsCrafted ?? 0 },
     { label: 'Enchantments', value: stats.itemsEnchanted ?? 0 },
     { label: 'Trades', value: stats.villagerTrades ?? 0 },
-    { label: 'Emeralds Earned', value: stats.emeraldsEarned ?? 0 },
-    { label: 'Distance Walked', value: `${Math.round(stats.distanceWalked ?? 0)} blocks` },
+    { label: 'Emeralds', value: stats.emeraldsEarned ?? 0 },
+    { label: 'Fish Caught', value: stats.fishCaught ?? 0 },
+    { label: 'Food Eaten', value: stats.foodEaten ?? 0 },
+    { label: 'Distance', value: `${Math.round(stats.distanceWalked ?? 0)} blk` },
     { label: 'Highest Point', value: `Y=${Math.round(stats.highestY ?? 0)}` },
     { label: 'Longest Life', value: formatPlayTime(stats.longestLifeSeconds ?? 0) },
     { label: 'XP Multiplier', value: xpMultiplier ?? '1.0x' },
@@ -303,6 +314,68 @@ export default function ProfilePanel({
             />
           </div>
         </div>
+
+        {/* On-chain info (wallet holders) */}
+        {walletAddress && (
+          <>
+            <div style={{ height: '1px', background: '#555', margin: '2px 0' }} />
+            <div style={{
+              fontFamily: "'Press Start 2P', monospace", fontSize: '8px',
+              color: 'rgba(255,255,255,0.6)', textShadow: '1px 1px 0 rgba(0,0,0,0.6)',
+              marginBottom: '4px',
+            }}>
+              ON-CHAIN
+            </div>
+            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+              <div style={{
+                background: 'rgba(0,82,255,0.1)', border: '1px solid rgba(0,82,255,0.3)',
+                padding: '6px 8px', display: 'flex', flexDirection: 'column',
+              }}>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: 'rgba(255,255,255,0.5)' }}>
+                  Network
+                </span>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '18px', color: '#0052ff', textShadow: '1px 1px 0 #000' }}>
+                  Base
+                </span>
+              </div>
+              <div style={{
+                background: 'rgba(0,0,0,0.35)', border: '1px solid #444',
+                padding: '6px 8px', display: 'flex', flexDirection: 'column',
+              }}>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: 'rgba(255,255,255,0.5)' }}>
+                  Balance
+                </span>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '18px', color: '#b0c4de', textShadow: '1px 1px 0 #000' }}>
+                  {ethBalance} ETH
+                </span>
+              </div>
+              <div style={{
+                background: 'rgba(0,0,0,0.35)', border: '1px solid #444',
+                padding: '6px 8px', display: 'flex', flexDirection: 'column',
+              }}>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: 'rgba(255,255,255,0.5)' }}>
+                  Tier Perks
+                </span>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '18px', color: tierColor, textShadow: '1px 1px 0 #000' }}>
+                  Active
+                </span>
+              </div>
+              <div style={{
+                background: 'rgba(0,0,0,0.35)', border: '1px solid #444',
+                padding: '6px 8px', display: 'flex', flexDirection: 'column',
+              }}>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: 'rgba(255,255,255,0.5)' }}>
+                  Chain ID
+                </span>
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '18px', color: '#fff', textShadow: '1px 1px 0 #000' }}>
+                  8453
+                </span>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div style={{ height: '1px', background: '#555', margin: '2px 0' }} />
 
         {/* Land claims */}
         <div className="flex items-center justify-between">

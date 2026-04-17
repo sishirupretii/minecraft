@@ -4732,8 +4732,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'balance' || cmd === 'bal') {
+              if (!walletAddress) {
+                appendChat({ username: 'system', message: '⛓️ Connect your wallet to see balance', isSystem: true });
+                return;
+              }
+              const ethAmt = ethBalance !== undefined ? (Number(ethBalance) / 1e18).toFixed(4) : '—';
+              appendChat({ username: 'system', message: `💰 Wallet: ${walletAddress.slice(0,6)}...${walletAddress.slice(-4)} | ${ethAmt} ETH on Base (chain 8453) | Tier: ${tierInfo.label}`, isSystem: true });
+              return;
+            }
+
             if (cmd === 'help') {
-              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /help', isSystem: true });
+              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /help', isSystem: true });
               return;
             }
 
