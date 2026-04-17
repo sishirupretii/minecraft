@@ -250,7 +250,7 @@ export default function HUD({
       {/* Keybind hints (bottom-left) */}
       <div className="pointer-events-none absolute bottom-3 left-4 flex gap-2">
         <span className="text-[9px] text-white/20" style={{ fontFamily: "'VT323', monospace" }}>
-          F1:Controls E:Inv L:LB P:Profile J:Achieve K:Perks
+          F1:Controls E:Inv L:LB P:Profile J:Achieve K:Perks O:Settings
         </span>
       </div>
 

@@ -81,6 +81,7 @@ import AchievementPanel from './panels/AchievementPanel';
 import LandClaimPanel from './panels/LandClaimPanel';
 import TierPerksPanel from './panels/TierPerksPanel';
 import ControlsPanel from './panels/ControlsPanel';
+import SettingsPanel from './panels/SettingsPanel';
 import Minimap from './Minimap';
 
 interface Props {
@@ -193,6 +194,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   // ---- On-chain: Land claims ----
   const [tierPerksOpen, setTierPerksOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [gameVolume, setGameVolume] = useState(1.0);
+  const [gameFov, setGameFov] = useState(75);
+  const [renderDist, setRenderDist] = useState(90);
+  const [shadowsOn, setShadowsOn] = useState(true);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const [landClaims, setLandClaims] = useState<Map<string, LandClaim>>(new Map());
   const landClaimsRef = useRef<Map<string, LandClaim>>(new Map());
   const [landClaimOpen, setLandClaimOpen] = useState(false);
@@ -589,6 +598,8 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
     scene.add(camera);
+    cameraRef.current = camera;
+    sceneRef.current = scene;
 
     // ---- First-person hand ----
     const handGeom = new THREE.BoxGeometry(0.3, 0.3, 0.3);
@@ -611,6 +622,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    rendererRef.current = renderer;
 
     // ---- Lighting ----
     const ambient = new THREE.AmbientLight(0xaab8cc, 0.3);
@@ -3794,6 +3806,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         e.preventDefault();
         setControlsOpen(v => !v);
       }
+      if (e.key.toLowerCase() === 'o') {
+        setSettingsOpen(v => !v);
+      }
       if (e.key.toLowerCase() === 'm') {
         setShowMinimap(v => !v);
       }
@@ -3984,6 +3999,33 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     }
     prevLevelRef.current = xpInfo.level;
   }, [xpInfo.level]);
+
+  // ---- Settings reactivity ----
+  useEffect(() => {
+    if (cameraRef.current) {
+      cameraRef.current.fov = gameFov;
+      cameraRef.current.updateProjectionMatrix();
+    }
+  }, [gameFov]);
+
+  useEffect(() => {
+    if (rendererRef.current) {
+      rendererRef.current.shadowMap.enabled = shadowsOn;
+      rendererRef.current.shadowMap.needsUpdate = true;
+    }
+  }, [shadowsOn]);
+
+  useEffect(() => {
+    if (sceneRef.current && sceneRef.current.fog instanceof THREE.Fog) {
+      sceneRef.current.fog.far = renderDist;
+      sceneRef.current.fog.near = Math.max(10, renderDist - 30);
+    }
+  }, [renderDist]);
+
+  useEffect(() => {
+    const audio = getAudio();
+    audio.setVolume(gameVolume);
+  }, [gameVolume]);
 
   return (
     <div
@@ -4767,6 +4809,27 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       <ControlsPanel
         visible={controlsOpen}
         onClose={() => setControlsOpen(false)}
+      />
+
+      <SettingsPanel
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        muted={muted}
+        onToggleMute={() => {
+          const audio = getAudio();
+          const now = audio.toggleMute();
+          setMuted(now);
+        }}
+        volume={gameVolume}
+        onVolumeChange={setGameVolume}
+        fov={gameFov}
+        onFovChange={setGameFov}
+        renderDist={renderDist}
+        onRenderDistChange={setRenderDist}
+        showCoords={showCoords}
+        onToggleCoords={() => setShowCoords(v => !v)}
+        shadows={shadowsOn}
+        onToggleShadows={() => setShadowsOn(v => !v)}
       />
 
       {/* WebGL error */}

@@ -114,6 +114,7 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private muted = false;
+  private volume = 1.0; // 0..1
 
   // Ambient wind nodes (kept around so we can tweak the gain live)
   private windSource: AudioBufferSourceNode | null = null;
@@ -131,6 +132,8 @@ export class AudioEngine {
       try {
         const stored = window.sessionStorage.getItem('bc_muted');
         if (stored === '1') this.muted = true;
+        const storedVol = window.sessionStorage.getItem('bc_volume');
+        if (storedVol) this.volume = Math.max(0, Math.min(1, parseFloat(storedVol)));
       } catch {}
     }
   }
@@ -143,7 +146,7 @@ export class AudioEngine {
       if (!AudioCtor) return;
       this.ctx = new AudioCtor();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = this.muted ? 0 : 1;
+      this.masterGain.gain.value = this.muted ? 0 : this.volume;
       this.masterGain.connect(this.ctx.destination);
       this.startWind();
       this.startMusic();
@@ -157,9 +160,19 @@ export class AudioEngine {
 
   toggleMute(): boolean {
     this.muted = !this.muted;
-    if (this.masterGain) this.masterGain.gain.value = this.muted ? 0 : 1;
+    if (this.masterGain) this.masterGain.gain.value = this.muted ? 0 : this.volume;
     try { window.sessionStorage.setItem('bc_muted', this.muted ? '1' : '0'); } catch {}
     return this.muted;
+  }
+
+  getVolume(): number { return this.volume; }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.masterGain && !this.muted) {
+      this.masterGain.gain.value = this.volume;
+    }
+    try { window.sessionStorage.setItem('bc_volume', String(this.volume)); } catch {}
   }
 
   playBlockBreak(type: BlockType) {
