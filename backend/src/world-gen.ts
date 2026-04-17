@@ -1469,8 +1469,10 @@ export function generateWorld(seed = 1337): Block[] {
       b.y >= SPAWN_PLATFORM_Y && b.y <= SPAWN_PLATFORM_Y + 15;
     if (!inSpawnClear) filtered.push(b);
   }
+  // Replace contents in-place. Can't use `blocks.push(...filtered)` — spread
+  // blows the stack on arrays of 100k+ (argument list overflow in V8).
   blocks.length = 0;
-  blocks.push(...filtered);
+  for (let i = 0; i < filtered.length; i++) blocks.push(filtered[i]);
   // Build a 9x9 stone platform at y=SPAWN_PLATFORM_Y - 1
   for (let sdx = -4; sdx <= 4; sdx++) {
     for (let sdz = -4; sdz <= 4; sdz++) {
