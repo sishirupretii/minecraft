@@ -3049,6 +3049,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     // Health / hunger accumulators
     let healthFloat = MAX_HEALTH;
     let hungerFloat = MAX_HUNGER;
+    let justDied = false; // guards death-loop re-firing
     let lastZombieSpawn = 0;
     let hurtFlashTimer = 0;
     let lastPosX = camera.position.x;
@@ -3892,14 +3893,21 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       if (healthRef.current < healthFloat) {
         healthFloat = healthRef.current;
       }
+      // Sync UP on respawn: if handleRespawn set healthRef higher than healthFloat,
+      // (e.g. healthFloat=0 from death, healthRef=20 from respawn click), match it.
+      if (healthRef.current > healthFloat && healthRef.current >= MAX_HEALTH - 0.5) {
+        healthFloat = healthRef.current;
+        hungerFloat = hungerRef.current; // also sync hunger in case respawn restored it
+      }
       const healthInt = Math.round(healthFloat);
       if (healthInt !== healthRef.current) {
         healthRef.current = healthInt;
         setHealth(healthInt);
       }
 
-      // Death → show death screen
-      if (healthFloat <= 0) {
+      // Death → show death screen (only once per death, guarded by justDied flag)
+      if (healthFloat <= 0 && !justDied) {
+        justDied = true; // prevent re-firing every frame until respawn
         statsRef.current.deaths++;
         statsRef.current.currentLifeSeconds = 0; // reset life timer
         // Set death cause from last damage source
@@ -3937,6 +3945,10 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         }
         audio.playMobHurt();
         lastDamageSource = 'Died'; // reset for next death
+      }
+      // Clear justDied flag once player has been revived (health > 0)
+      if (healthFloat > 0 && justDied) {
+        justDied = false;
       }
 
       // Track play time & exploration stats
@@ -4893,21 +4905,40 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     if (playerRef.current) {
       const world = worldRef.current;
-      // Always use the safe spawn platform (20, 20) — guaranteed clear
-      let sp = spawnPointRef.current || { x: 20.5, y: 20, z: 20.5 };
-      // Aggressively clear any blocks at the spawn position (in case something grew there)
+      // Default: the force-cleared safe spawn platform
+      const SAFE_SPAWN = { x: 20.5, y: 20, z: 20.5 };
+      let sp = spawnPointRef.current || SAFE_SPAWN;
+      // VALIDATE spawn point: if inside a block or in city bounds (x=40..88, z=40..88),
+      // fall back to safe spawn
       if (world) {
         const sx = Math.floor(sp.x);
         const sz = Math.floor(sp.z);
-        // Remove any blocks at head/body position
-        for (let clearY = Math.floor(sp.y); clearY <= Math.floor(sp.y) + 2; clearY++) {
-          if (world.has(sx, clearY, sz)) {
-            world.removeBlock(sx, clearY, sz, true);
+        const inCity = sx >= 40 && sx <= 88 && sz >= 40 && sz <= 88;
+        // Scan up from sp.y for a clear 3-block column
+        let clearY = Math.floor(sp.y);
+        let foundClear = false;
+        for (let tries = 0; tries < 80; tries++) {
+          if (!world.has(sx, clearY, sz) && !world.has(sx, clearY + 1, sz)) {
+            foundClear = true;
+            break;
           }
+          clearY++;
         }
-        // Make sure there's ground below
-        if (!world.has(sx, Math.floor(sp.y) - 1, sz)) {
-          world.addBlock(sx, Math.floor(sp.y) - 1, sz, 'royal_brick');
+        if (inCity || !foundClear) {
+          // Use the guaranteed safe platform
+          sp = { ...SAFE_SPAWN };
+          spawnPointRef.current = sp;
+        } else {
+          sp = { x: sp.x, y: clearY, z: sp.z };
+        }
+        // Final safety: force-clear blocks at spawn + ensure ground
+        const fsx = Math.floor(sp.x);
+        const fsz = Math.floor(sp.z);
+        for (let cy = Math.floor(sp.y); cy <= Math.floor(sp.y) + 2; cy++) {
+          if (world.has(fsx, cy, fsz)) world.removeBlock(fsx, cy, fsz, true);
+        }
+        if (!world.has(fsx, Math.floor(sp.y) - 1, fsz)) {
+          world.addBlock(fsx, Math.floor(sp.y) - 1, fsz, 'royal_brick');
         }
       }
       playerRef.current.setPosition(sp.x, sp.y, sp.z);
