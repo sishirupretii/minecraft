@@ -2410,6 +2410,31 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       audio.playBlockPlace(type);
       world.addBlock(x, y, z, type, true);
       socket.emit('block:place', { x, y, z, type });
+      // Block place particles (small poof)
+      const blockColor = BLOCKS[type].color;
+      for (let bp = 0; bp < 4; bp++) {
+        const mat = new THREE.MeshStandardMaterial({
+          color: blockColor, transparent: true, opacity: 0.7,
+        });
+        const m = new THREE.Mesh(particleGeom, mat);
+        m.position.set(
+          x + 0.5 + (Math.random() - 0.5) * 0.6,
+          y + 0.5 + (Math.random() - 0.5) * 0.6,
+          z + 0.5 + (Math.random() - 0.5) * 0.6,
+        );
+        m.castShadow = false;
+        scene.add(m);
+        particles.push({
+          mesh: m,
+          velocity: new THREE.Vector3(
+            (Math.random() - 0.5) * 1.5,
+            Math.random() * 1.5,
+            (Math.random() - 0.5) * 1.5,
+          ),
+          age: 0,
+          life: 0.3 + Math.random() * 0.2,
+        });
+      }
       handSwingTime = 0;
     };
 
@@ -3290,6 +3315,32 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         if (hungerFloat <= 0) setDeathCause('Starved to death');
         setIsDead(true);
         player.inventoryOpen = true; // freeze movement
+        // Death explosion particles
+        for (let dp = 0; dp < 15; dp++) {
+          const mat = new THREE.MeshStandardMaterial({
+            color: 0xff2222, emissive: 0xff0000, emissiveIntensity: 0.3,
+            transparent: true, opacity: 0.9,
+          });
+          const m = new THREE.Mesh(particleGeom, mat);
+          m.position.set(
+            camera.position.x + (Math.random() - 0.5) * 0.5,
+            camera.position.y + (Math.random() - 0.5) * 0.5,
+            camera.position.z + (Math.random() - 0.5) * 0.5,
+          );
+          m.castShadow = false;
+          scene.add(m);
+          particles.push({
+            mesh: m,
+            velocity: new THREE.Vector3(
+              (Math.random() - 0.5) * 4,
+              Math.random() * 4,
+              (Math.random() - 0.5) * 4,
+            ),
+            age: 0,
+            life: 0.6 + Math.random() * 0.4,
+          });
+        }
+        audio.playMobHurt();
         lastDamageSource = 'Died'; // reset for next death
       }
 
@@ -3647,6 +3698,36 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         const t = p.age / p.life;
         const mat = p.mesh.material as THREE.MeshStandardMaterial;
         mat.opacity = 1 - Math.max(0, (t - 0.5) * 2);
+      }
+
+      // ---- Tier cosmetic particles (Gold/Diamond holders) ----
+      {
+        const cosmetics = TIER_COSMETICS[balanceTier];
+        if (cosmetics.hasParticles && Math.random() < dt * 3) {
+          const pColor = cosmetics.particleColor;
+          const mat = new THREE.MeshStandardMaterial({
+            color: pColor, emissive: pColor, emissiveIntensity: 0.5,
+            transparent: true, opacity: 0.8,
+          });
+          const m = new THREE.Mesh(particleGeom, mat);
+          m.position.set(
+            player.position.x + (Math.random() - 0.5) * 1.5,
+            player.position.y + Math.random() * 2,
+            player.position.z + (Math.random() - 0.5) * 1.5,
+          );
+          m.castShadow = false;
+          scene.add(m);
+          particles.push({
+            mesh: m,
+            velocity: new THREE.Vector3(
+              (Math.random() - 0.5) * 0.3,
+              0.5 + Math.random() * 0.5,
+              (Math.random() - 0.5) * 0.3,
+            ),
+            age: 0,
+            life: 0.8 + Math.random() * 0.5,
+          });
+        }
       }
 
       // ---- Dynamic torch lighting ----
