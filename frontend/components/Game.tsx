@@ -468,6 +468,77 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const sky = new THREE.Mesh(skyGeom, skyMat);
     scene.add(sky);
 
+    // ---- BASECRAFT sky logo (Base branding) ----
+    // Generate a canvas texture with the "BASECRAFT" text in Base blue
+    const logoCanvas = document.createElement('canvas');
+    logoCanvas.width = 1024;
+    logoCanvas.height = 256;
+    const lctx = logoCanvas.getContext('2d')!;
+    // Transparent background
+    lctx.clearRect(0, 0, 1024, 256);
+    // Base blue gradient text
+    const logoGrad = lctx.createLinearGradient(0, 0, 0, 256);
+    logoGrad.addColorStop(0, '#3478f6');
+    logoGrad.addColorStop(0.5, '#0052ff');
+    logoGrad.addColorStop(1, '#0033aa');
+    lctx.fillStyle = logoGrad;
+    lctx.font = 'bold 150px "Press Start 2P", monospace';
+    lctx.textAlign = 'center';
+    lctx.textBaseline = 'middle';
+    // Drop shadow
+    lctx.shadowColor = 'rgba(0,0,0,0.8)';
+    lctx.shadowBlur = 12;
+    lctx.shadowOffsetX = 4;
+    lctx.shadowOffsetY = 4;
+    lctx.fillText('BASECRAFT', 512, 128);
+    // Reset shadow, add outline
+    lctx.shadowColor = 'transparent';
+    lctx.strokeStyle = '#ffffff';
+    lctx.lineWidth = 3;
+    lctx.strokeText('BASECRAFT', 512, 128);
+    const logoTex = new THREE.CanvasTexture(logoCanvas);
+    logoTex.needsUpdate = true;
+    const logoMat = new THREE.SpriteMaterial({
+      map: logoTex,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const logoSprite = new THREE.Sprite(logoMat);
+    logoSprite.scale.set(180, 45, 1);
+    logoSprite.position.set(0, 140, -180); // high in the sky, slightly north
+    logoSprite.renderOrder = 5;
+    scene.add(logoSprite);
+
+    // "Built on Base" subtitle
+    const subCanvas = document.createElement('canvas');
+    subCanvas.width = 1024;
+    subCanvas.height = 128;
+    const sctx = subCanvas.getContext('2d')!;
+    sctx.clearRect(0, 0, 1024, 128);
+    sctx.fillStyle = '#0052ff';
+    sctx.font = 'bold 60px "Press Start 2P", monospace';
+    sctx.textAlign = 'center';
+    sctx.textBaseline = 'middle';
+    sctx.shadowColor = 'rgba(0,0,0,0.7)';
+    sctx.shadowBlur = 8;
+    sctx.shadowOffsetY = 3;
+    sctx.fillText('⬢ BUILT ON BASE ⬢', 512, 64);
+    const subTex = new THREE.CanvasTexture(subCanvas);
+    const subMat = new THREE.SpriteMaterial({
+      map: subTex,
+      transparent: true,
+      opacity: 0.7,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const subSprite = new THREE.Sprite(subMat);
+    subSprite.scale.set(120, 15, 1);
+    subSprite.position.set(0, 115, -180);
+    subSprite.renderOrder = 5;
+    scene.add(subSprite);
+
     // ---- Stars ----
     const starGeom = new THREE.BufferGeometry();
     const starCount = 220;
@@ -849,6 +920,31 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     const arrowProjectiles: ArrowProjectile[] = [];
     const arrowGeom = new THREE.BoxGeometry(0.06, 0.06, 0.5);
     const arrowMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a });
+
+    // ---- Base coins (collectible Base-themed pickups) ----
+    type BaseCoin = { group: THREE.Group; baseY: number; collected: boolean; spinPhase: number };
+    const baseCoins: BaseCoin[] = [];
+    // Hexagonal Base coin geometry (cylinder with 6 sides = hexagon)
+    const coinGeom = new THREE.CylinderGeometry(0.4, 0.4, 0.08, 6);
+    const coinMat = new THREE.MeshStandardMaterial({
+      color: 0x0052ff, emissive: 0x0052ff, emissiveIntensity: 0.5,
+      metalness: 0.8, roughness: 0.3,
+    });
+    const coinGlowMat = new THREE.MeshBasicMaterial({
+      color: 0x3478f6, transparent: true, opacity: 0.35,
+    });
+    function spawnBaseCoin(x: number, y: number, z: number) {
+      const g = new THREE.Group();
+      const coin = new THREE.Mesh(coinGeom, coinMat);
+      coin.rotation.x = Math.PI / 2; // stand upright
+      g.add(coin);
+      const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.12, 6), coinGlowMat);
+      glow.rotation.x = Math.PI / 2;
+      g.add(glow);
+      g.position.set(x, y, z);
+      scene.add(g);
+      baseCoins.push({ group: g, baseY: y, collected: false, spinPhase: Math.random() * Math.PI * 2 });
+    }
     function spawnArrow(origin: THREE.Vector3, direction: THREE.Vector3) {
       const mesh = new THREE.Mesh(arrowGeom, arrowMat.clone());
       mesh.position.copy(origin);
@@ -1091,7 +1187,20 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         others.add(op);
       }
       setSelfColor(payload.you.color);
-      player.setPosition(payload.spawnPoint.x, payload.spawnPoint.y, payload.spawnPoint.z);
+      // Safe spawn: ensure clear 3-block column at spawn point
+      let safeSp = { ...payload.spawnPoint };
+      const sx = Math.floor(safeSp.x);
+      const sz = Math.floor(safeSp.z);
+      let safeY = safeSp.y;
+      // If starting position is inside a block, scan upward for clear space
+      let attempts = 0;
+      while (attempts < 30 && (world.has(sx, Math.floor(safeY), sz) || world.has(sx, Math.floor(safeY) + 1, sz))) {
+        safeY++;
+        attempts++;
+      }
+      safeSp.y = safeY;
+      spawnPointRef.current = { x: safeSp.x, y: safeSp.y, z: safeSp.z };
+      player.setPosition(safeSp.x, safeSp.y, safeSp.z);
       setInvulnerable(true);
       invulnerableRef.current = true;
       setTimeout(() => { setInvulnerable(false); invulnerableRef.current = false; }, 5000);
@@ -1117,6 +1226,29 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       turtles.spawn(3, 64, 64, 30);
       // Warden boss — spawns deep underground (rare, 1 per world)
       wardens.spawn(1, 32 + Math.floor(Math.random() * 64), 32 + Math.floor(Math.random() * 64), 10);
+
+      // ---- Spawn Base coins scattered across the world ----
+      const coinCount = 30;
+      for (let ci = 0; ci < coinCount; ci++) {
+        // Find a random surface position
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const cx = 8 + Math.floor(Math.random() * 112);
+          const cz = 8 + Math.floor(Math.random() * 112);
+          // Scan down from y=80 to find top solid block
+          let topY = -1;
+          for (let ty = 80; ty >= 1; ty--) {
+            const bt = world.getType(cx, ty, cz);
+            if (bt && bt !== 'water' && bt !== 'lava' && bt !== 'leaves') {
+              topY = ty;
+              break;
+            }
+          }
+          if (topY > 0 && topY < 70) {
+            spawnBaseCoin(cx + 0.5, topY + 1.5, cz + 0.5);
+            break;
+          }
+        }
+      }
 
       // ---- Generate structures: small dungeons ----
       const dungeonCount = 3 + Math.floor(Math.random() * 3);
@@ -1670,7 +1802,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setInventory(inv);
         armorRef.current = currentArmor;
         setArmor(currentArmor);
-        audio.playBlockPlace('iron_ore');
+        audio.playArmorEquip();
         setToast(`Equipped ${def.label}`);
         setTimeout(() => setToast(null), 2000);
         return;
@@ -3898,6 +4030,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       sunGlow.position.copy(sun.position);
       sunHalo.position.copy(sun.position);
       moon.position.set(-sx * sunRadius, -sy * 150, 40);
+
+      // BASECRAFT sky logo follows camera (always visible in sky)
+      logoSprite.position.set(camera.position.x, camera.position.y + 120, camera.position.z - 180);
+      subSprite.position.set(camera.position.x, camera.position.y + 95, camera.position.z - 180);
+      // Fade logo at night (less visible)
+      const nightFade = Math.max(0.3, dayMix);
+      logoMat.opacity = 0.85 * nightFade;
+      subMat.opacity = 0.7 * nightFade;
       sunLight.position.set(camera.position.x + sx * 120, camera.position.y + Math.max(20, sy * 150), camera.position.z + 40);
       sunLight.target.position.copy(camera.position);
       lerp3(PALETTE.night.sun, PALETTE.day.sun, dayMix, _tmpCol);
@@ -4313,6 +4453,58 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         orbMat.opacity = Math.max(0, 1 - (orb.age / orb.life) * 0.5);
       }
 
+      // ---- Base coins update (rotate + check pickup) ----
+      for (let i = baseCoins.length - 1; i >= 0; i--) {
+        const coin = baseCoins[i];
+        if (coin.collected) continue;
+        coin.spinPhase += dt * 2;
+        // Spin and bob
+        coin.group.rotation.y = coin.spinPhase;
+        coin.group.position.y = coin.baseY + Math.sin(coin.spinPhase * 1.5) * 0.15;
+        // Check pickup (within 1.5 blocks)
+        const dx = camera.position.x - coin.group.position.x;
+        const dy = camera.position.y - coin.group.position.y;
+        const dz = camera.position.z - coin.group.position.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq < 2.25) {
+          // Collect!
+          coin.collected = true;
+          scene.remove(coin.group);
+          // Reward: emeralds + XP + toast
+          const rewardXp = 25;
+          const newXp = totalXpRef.current + rewardXp;
+          totalXpRef.current = newXp;
+          setTotalXp(newXp);
+          let inv = inventoryRef.current;
+          inv = addItem(inv, 'emerald', 1);
+          inventoryRef.current = inv;
+          setInventory(inv);
+          statsRef.current.emeraldsEarned += 1;
+          setToast(`⬢ Base Coin Collected! +${rewardXp} XP, +1 Emerald`);
+          setTimeout(() => setToast(null), 2000);
+          audio.playLevelUp();
+          // Sparkle particles
+          for (let sp = 0; sp < 10; sp++) {
+            const sparkMat = new THREE.MeshBasicMaterial({
+              color: 0x3478f6, transparent: true, opacity: 0.9,
+            });
+            const sm = new THREE.Mesh(particleGeom, sparkMat);
+            sm.position.copy(coin.group.position);
+            sm.castShadow = false;
+            scene.add(sm);
+            particles.push({
+              mesh: sm,
+              velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * 4,
+                1 + Math.random() * 3,
+                (Math.random() - 0.5) * 4,
+              ),
+              age: 0, life: 0.6 + Math.random() * 0.3,
+            });
+          }
+        }
+      }
+
       // ---- Arrow projectiles update ----
       for (let i = arrowProjectiles.length - 1; i >= 0; i--) {
         const arrow = arrowProjectiles[i];
@@ -4606,10 +4798,34 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     }
 
     if (playerRef.current) {
-      const sp = spawnPointRef.current || { x: 64.5, y: 30, z: 64.5 };
+      const world = worldRef.current;
+      let sp = spawnPointRef.current || { x: 64.5, y: 80, z: 40.5 };
+      // Find a safe spawn position (clear 3-block column above a solid block)
+      if (world) {
+        const sx = Math.floor(sp.x);
+        const sz = Math.floor(sp.z);
+        // Scan downward from y=80 to find top solid block, then spawn 2 above it
+        let safeY = 80;
+        for (let ty = 80; ty >= 1; ty--) {
+          const bt = world.getType(sx, ty, sz);
+          if (bt && bt !== 'water' && bt !== 'lava') {
+            safeY = ty + 2; // spawn 2 blocks above solid ground
+            break;
+          }
+        }
+        // Verify clear space above
+        let attempts = 0;
+        while (attempts < 10 && (world.has(sx, safeY, sz) || world.has(sx, safeY + 1, sz))) {
+          safeY++;
+          attempts++;
+        }
+        sp = { x: sp.x, y: safeY, z: sp.z };
+      }
       playerRef.current.setPosition(sp.x, sp.y, sp.z);
+      playerRef.current.velocity.set(0, 0, 0);
       playerRef.current.inventoryOpen = false;
       playerRef.current.breathTimer = 10;
+      playerRef.current.chatOpen = false;
     }
     // Tier-based respawn invulnerability
     const protDuration = TIER_RESPAWN_PROTECTION[balanceTier] * 1000;
@@ -5506,6 +5722,28 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
             if (cmd === 'level' || cmd === 'lvl') {
               appendChat({ username: 'system', message: `⭐ Level ${xpInfo.level} | XP: ${xpInfo.xpInLevel}/${xpInfo.xpToNext} (${Math.floor((xpInfo.xpInLevel / Math.max(1, xpInfo.xpToNext)) * 100)}%) | Tier bonus: ${TIER_XP_MULTIPLIER[balanceTier]}x`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'unstuck' || cmd === 'stuck') {
+              // Emergency unstuck — teleport player upward to find clear space
+              const p = playerRef.current;
+              const world = worldRef.current;
+              if (p && world) {
+                const sx = Math.floor(p.position.x);
+                const sz = Math.floor(p.position.z);
+                let safeY = 80;
+                for (let ty = 80; ty >= 1; ty--) {
+                  const bt = world.getType(sx, ty, sz);
+                  if (bt && bt !== 'water' && bt !== 'lava') {
+                    safeY = ty + 2;
+                    break;
+                  }
+                }
+                p.setPosition(sx + 0.5, safeY, sz + 0.5);
+                p.velocity.set(0, 0, 0);
+                appendChat({ username: 'system', message: `🆘 Unstuck! Teleported to (${sx}, ${safeY}, ${sz})`, isSystem: true });
+              }
               return;
             }
 

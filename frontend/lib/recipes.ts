@@ -284,7 +284,25 @@ export const RECIPES: Recipe[] = [
   { id: 'nether_portal_c', ingredients: [{ item: 'obsidian', count: 10 }, { item: 'flint_and_steel', count: 1 }], result: { item: 'nether_portal', count: 1 }, needsTable: true },
   { id: 'glowstone_c',   ingredients: [{ item: 'glowstone_dust', count: 4 }], result: { item: 'glowstone', count: 1 } },
   { id: 'cookie_c',      ingredients: [{ item: 'wheat_item', count: 2 }, { item: 'coal', count: 1 }], result: { item: 'cookie', count: 8 }, needsFurnace: true },
+  // Batch 56: More recipes
+  { id: 'cooked_pork',   ingredients: [{ item: 'porkchop', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'cooked_porkchop', count: 1 }, needsFurnace: true },
+  { id: 'cooked_beef_c', ingredients: [{ item: 'beef', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'cooked_beef', count: 1 }, needsFurnace: true },
+  { id: 'cooked_chick',  ingredients: [{ item: 'chicken_meat', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'cooked_chicken', count: 1 }, needsFurnace: true },
+  { id: 'pumpkin_pie',   ingredients: [{ item: 'pumpkin', count: 1 }, { item: 'sugar', count: 1 }, { item: 'wheat_item', count: 1 }], result: { item: 'pumpkin_pie', count: 1 } },
+  { id: 'terracotta_c',  ingredients: [{ item: 'clay', count: 4 }, { item: 'coal', count: 1 }], result: { item: 'terracotta', count: 4 }, needsFurnace: true },
+  { id: 'glass_c',       ingredients: [{ item: 'sand_blue', count: 4 }, { item: 'coal', count: 1 }], result: { item: 'glass', count: 4 }, needsFurnace: true },
+  { id: 'charcoal_c',    ingredients: [{ item: 'cyan_wood', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'coal', count: 2 }, needsFurnace: true },
+  { id: 'stone_brick_c', ingredients: [{ item: 'cobblestone', count: 4 }], result: { item: 'stone_bricks', count: 4 } },
+  { id: 'mossy_cobble_c',ingredients: [{ item: 'cobblestone', count: 1 }, { item: 'vine', count: 1 }], result: { item: 'mossy_cobblestone', count: 1 } },
+  { id: 'prismarine_c',  ingredients: [{ item: 'prismarine_shard', count: 4 }], result: { item: 'prismarine', count: 1 } },
+  { id: 'sea_lantern_c', ingredients: [{ item: 'prismarine_shard', count: 4 }, { item: 'glowstone_dust', count: 2 }], result: { item: 'sea_lantern', count: 1 }, needsTable: true },
+  { id: 'gold_block_c',  ingredients: [{ item: 'gold_ingot', count: 9 }], result: { item: 'gold_block', count: 1 }, needsTable: true },
+  { id: 'iron_block_c',  ingredients: [{ item: 'iron_ingot', count: 9 }], result: { item: 'iron_block', count: 1 }, needsTable: true },
+  { id: 'diamond_block_c',ingredients: [{ item: 'diamond', count: 9 }], result: { item: 'diamond_block', count: 1 }, needsTable: true },
+  { id: 'nether_brick_c',ingredients: [{ item: 'nether_bricks', count: 4 }], result: { item: 'nether_bricks', count: 4 } },
+  { id: 'polished_stone',ingredients: [{ item: 'cobblestone', count: 4 }, { item: 'coal', count: 1 }], result: { item: 'stone_bricks', count: 4 }, needsFurnace: true },
 ];
+
 
 /** Check if the player has enough materials to craft a recipe. */
 export function canCraft(inv: Inventory, recipe: Recipe): boolean {

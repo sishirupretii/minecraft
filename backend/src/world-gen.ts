@@ -2216,7 +2216,31 @@ function buildCreatorHub(
   put(x1 - 1, G + 4, z1, 'base_block');
 }
 
-export function computeSpawnPoint(_blocks: Block[]): { x: number; y: number; z: number } {
-  // Spawn at the Base City plaza, facing Coinbase HQ (south of the plaza)
-  return { x: 64 + 0.5, y: 12, z: 60 + 0.5 };
+export function computeSpawnPoint(blocks: Block[]): { x: number; y: number; z: number } {
+  // Spawn at an open area north of the city plaza, clear of buildings.
+  // Target: x=64, z=40 (north of city), find top block there.
+  const sx = 64, sz = 40;
+  // Build a height map for this column
+  let topY = 0;
+  for (const b of blocks) {
+    if (b.x === sx && b.z === sz && b.type !== 'water' && b.y > topY) {
+      topY = b.y;
+    }
+  }
+  // Verify there's 3 blocks of clear space above
+  const occupied = new Set<string>();
+  for (const b of blocks) {
+    if (b.x === sx && b.z === sz) occupied.add(`${b.y}`);
+  }
+  // Find first open 3-block column above topY
+  let spawnY = topY + 1;
+  for (let tries = 0; tries < 20; tries++) {
+    if (!occupied.has(`${spawnY}`) && !occupied.has(`${spawnY + 1}`) && !occupied.has(`${spawnY + 2}`)) {
+      break;
+    }
+    spawnY++;
+  }
+  // Safety: never spawn below y=15
+  if (spawnY < 15) spawnY = 15;
+  return { x: sx + 0.5, y: spawnY, z: sz + 0.5 };
 }
