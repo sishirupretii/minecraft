@@ -33,15 +33,40 @@ export interface HolderTier {
 }
 
 export interface StoreConfig {
+  // Payment token (USDC) — for BUY
+  paymentAddress?: `0x${string}`;
+  paymentDecimals?: number;
+  paymentSymbol?: string;
+  // Based Craft token — for BURN + holder tiers
   tokenAddress: `0x${string}`;
+  tokenDecimals?: number;
+  // Targets
   receiverAddress: `0x${string}`;
   burnAddress: `0x${string}`;
-  decimals: number;
+  decimals: number; // legacy = tokenDecimals
   chainId: number;
   items: StoreItem[];
   burnPerks: BurnPerk[];
   holderTiers: HolderTier[];
 }
+
+// Fallback item list — shown if server response is delayed/fails so store is
+// never blank. Matches the backend STORE_ITEMS exactly so prices line up.
+const FALLBACK_ITEMS: StoreItem[] = [
+  { id: 'starter_pack', label: 'Starter Pack', gameItem: 'cobblestone', count: 64, price: 10, icon: '🧱', description: '64 Cobblestone + tool kit' },
+  { id: 'wood_bundle', label: 'Wood Bundle', gameItem: 'cyan_wood', count: 32, price: 15, icon: '🌳', description: '32 logs for crafting' },
+  { id: 'torch_pack', label: 'Torch Pack', gameItem: 'torch', count: 64, price: 20, icon: '🔥', description: '64 torches — never fear the dark' },
+  { id: 'food_feast', label: 'Food Feast', gameItem: 'cooked_beef', count: 32, price: 30, icon: '🥩', description: '32 cooked steak' },
+  { id: 'iron_pickaxe', label: 'Iron Pickaxe', gameItem: 'iron_pickaxe', count: 1, price: 50, icon: '⛏️', description: 'Mine faster, break diamond ore' },
+  { id: 'diamond_pickaxe', label: 'Diamond Pickaxe', gameItem: 'diamond_pickaxe', count: 1, price: 150, icon: '💎⛏️', description: 'The ultimate mining tool' },
+  { id: 'diamond_sword', label: 'Diamond Sword', gameItem: 'diamond_sword', count: 1, price: 200, icon: '⚔️', description: 'Best melee weapon' },
+  { id: 'iron_armor_set', label: 'Iron Armor Set', gameItem: 'iron_helmet', count: 1, price: 80, icon: '🛡️', description: 'Iron helmet' },
+  { id: 'diamond_armor_set', label: 'Diamond Armor Set', gameItem: 'diamond_helmet', count: 1, price: 250, icon: '💎🛡️', description: 'Diamond helmet — unmatched defense' },
+  { id: 'golden_apples', label: 'Golden Apples (5)', gameItem: 'golden_apple', count: 5, price: 100, icon: '🍎', description: '5x golden apples — restore full HP' },
+  { id: 'ender_pearls', label: 'Ender Pearls (10)', gameItem: 'ender_pearl', count: 10, price: 80, icon: '🌀', description: '10x teleportation pearls' },
+  { id: 'tnt_crate', label: 'TNT Crate (16)', gameItem: 'tnt', count: 16, price: 60, icon: '💣', description: '16 TNT blocks for demolition' },
+  { id: 'beacon', label: 'Beacon', gameItem: 'beacon', count: 1, price: 500, icon: '🔷', description: 'Permanent speed/regen/strength buffs' },
+];
 
 export interface HolderInfo {
   balance: string;
@@ -140,9 +165,12 @@ export default function StorePanel({
     try {
       setBuyingId(item.id);
       setBurnMode(false);
-      const amount = parseUnits(item.price.toString(), config.decimals);
+      // Pay in USDC (6 decimals) to stable-price the store
+      const paymentAddress = config.paymentAddress ?? ('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`);
+      const paymentDecimals = config.paymentDecimals ?? 6;
+      const amount = parseUnits(item.price.toString(), paymentDecimals);
       const hash = await writeContractAsync({
-        address: config.tokenAddress,
+        address: paymentAddress,
         abi: erc20Abi,
         functionName: 'transfer',
         args: [config.receiverAddress, amount],
@@ -172,7 +200,9 @@ export default function StorePanel({
     try {
       setBuyingId(perk.id);
       setBurnMode(true);
-      const amount = parseUnits(perk.burnAmount.toString(), config.decimals);
+      // Burns always use $BASEDCRAFT token (its own decimals, not USDC's)
+      const tokenDecimals = config.tokenDecimals ?? config.decimals ?? 18;
+      const amount = parseUnits(perk.burnAmount.toString(), tokenDecimals);
       const hash = await writeContractAsync({
         address: config.tokenAddress,
         abi: erc20Abi,
@@ -188,8 +218,10 @@ export default function StorePanel({
     }
   }
 
-  const items = config?.items ?? [];
+  // Use server items if present, otherwise fallback catalog so store is never empty
+  const items = (config?.items && config.items.length > 0) ? config.items : FALLBACK_ITEMS;
   const tokenShort = config ? `${config.tokenAddress.slice(0, 6)}…${config.tokenAddress.slice(-4)}` : '';
+  const paymentSymbol = config?.paymentSymbol ?? 'USDC';
 
   return (
     <div
@@ -228,8 +260,8 @@ export default function StorePanel({
             color: 'rgba(255,255,255,0.55)',
           }}
         >
-          Pay with our token on Base mainnet — items delivered to your inventory after 1 confirmation.
-          Token: <span style={{ color: '#88aaff' }}>{tokenShort}</span>
+          🛒 Pay in <span style={{ color: '#2fb574' }}>{paymentSymbol}</span> on Base — stable USD prices, no surprises ·
+          🔥 Burn <span style={{ color: '#ff9966' }}>$BASEDCRAFT</span> for perks · Token: <span style={{ color: '#88aaff' }}>{tokenShort}</span>
         </div>
 
         {/* Holder info banner */}
@@ -312,7 +344,7 @@ export default function StorePanel({
           <div style={{ overflowY: 'auto', maxHeight: '55vh', paddingRight: '6px' }}>
             {items.length === 0 && (
               <div style={{ fontFamily: "'VT323', monospace", color: 'rgba(255,255,255,0.4)', textAlign: 'center', padding: '30px' }}>
-                Store unavailable — server not configured yet
+                Loading store items…
               </div>
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '8px' }}>
@@ -334,8 +366,8 @@ export default function StorePanel({
                     {item.description}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                    <span style={{ fontFamily: "'VT323', monospace", fontSize: '16px', color: '#5c9cff' }}>
-                      {item.price} 🪙
+                    <span style={{ fontFamily: "'VT323', monospace", fontSize: '16px', color: '#2fb574' }}>
+                      ${item.price} {paymentSymbol}
                     </span>
                     <button
                       onClick={() => handleBuy(item)}

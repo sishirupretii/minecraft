@@ -8,12 +8,23 @@ import { base } from 'viem/chains';
 import { supabase } from './supabase';
 
 // ---------- Config (env-driven, NEVER expose client-side) ----------
+// Our Based Craft token — used for HOLDER TIERS (hold to unlock perks)
+// and BURN-TO-UNLOCK (send to 0x...dead for prestige badges)
 export const TOKEN_ADDRESS = (process.env.STORE_TOKEN_ADDRESS ||
   '0x53b83E4C2402DcF4Fe17755d51dd92d25c1a67c8') as `0x${string}`;
+const TOKEN_DECIMALS = parseInt(process.env.STORE_TOKEN_DECIMALS || '18', 10);
+
+// USDC on Base — STABLE payment currency for the store. $10 USDC is always $10.
+// Avoids token-price fluctuation killing the store UX.
+export const PAYMENT_ADDRESS = (process.env.STORE_PAYMENT_ADDRESS ||
+  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as `0x${string}`; // USDC Base
+const PAYMENT_DECIMALS = parseInt(process.env.STORE_PAYMENT_DECIMALS || '6', 10);
+export const PAYMENT_SYMBOL = process.env.STORE_PAYMENT_SYMBOL || 'USDC';
+
+// Receiver wallet — where USDC purchases land. Env-only, never exposed.
 export const RECEIVER_ADDRESS = (process.env.STORE_RECEIVER_ADDRESS ||
   '').toLowerCase() as `0x${string}`;
 const RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
-const TOKEN_DECIMALS = parseInt(process.env.STORE_TOKEN_DECIMALS || '18', 10);
 
 // ERC-20 Transfer(address indexed from, address indexed to, uint256 value)
 const ERC20_ABI = parseAbi([
@@ -118,9 +129,13 @@ export function getItem(id: string): StoreItem | undefined {
   return STORE_ITEMS.find((it) => it.id === id);
 }
 
-// Compute raw token amount (uint256 string) for a whole-token price
+// Raw USDC amount (6-decimal) for store purchases. 10 → 10_000_000 (10 USDC)
 export function rawAmountForPrice(priceWhole: number): bigint {
-  return BigInt(priceWhole) * 10n ** BigInt(TOKEN_DECIMALS);
+  return BigInt(priceWhole) * 10n ** BigInt(PAYMENT_DECIMALS);
+}
+// Raw basedcraft token amount (18-decimal) for burns. Used by verifyBurn / burn perks
+export function rawTokenAmount(whole: number): bigint {
+  return BigInt(whole) * 10n ** BigInt(TOKEN_DECIMALS);
 }
 
 // ---------- Purchase verification ----------
@@ -169,8 +184,8 @@ export async function verifyPurchase(
   if (!receipt) return { ok: false, reason: 'Transaction not found' };
   if (receipt.status !== 'success') return { ok: false, reason: 'Transaction failed on-chain' };
 
-  // Find a Transfer log from our token TO the receiver
-  const tokenAddr = TOKEN_ADDRESS.toLowerCase();
+  // Find a Transfer log from USDC TO the receiver
+  const paymentAddr = PAYMENT_ADDRESS.toLowerCase();
   const receiverAddr = RECEIVER_ADDRESS.toLowerCase();
   const expectedRaw = rawAmountForPrice(item.price);
 
@@ -178,7 +193,7 @@ export async function verifyPurchase(
   let transferValue: bigint | null = null;
 
   for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== tokenAddr) continue;
+    if (log.address.toLowerCase() !== paymentAddr) continue;
     try {
       const decoded = decodeEventLog({
         abi: ERC20_ABI,
@@ -201,7 +216,7 @@ export async function verifyPurchase(
   if (!buyer || transferValue === null) {
     return {
       ok: false,
-      reason: `No valid Transfer of ${item.price} tokens to ${RECEIVER_ADDRESS} found in tx`,
+      reason: `No valid Transfer of ${item.price} ${PAYMENT_SYMBOL} to receiver found in tx`,
     };
   }
 
@@ -248,14 +263,22 @@ export async function recordPurchase(params: {
 /** Public info safe to expose to clients (no keys, no secrets). */
 export function publicStoreConfig() {
   return {
+    // Payment token (USDC) — used by purchases
+    paymentAddress: PAYMENT_ADDRESS,
+    paymentDecimals: PAYMENT_DECIMALS,
+    paymentSymbol: PAYMENT_SYMBOL,
+    // Based Craft token — used by burns + holder tiers
     tokenAddress: TOKEN_ADDRESS,
+    tokenDecimals: TOKEN_DECIMALS,
+    // Where payments land
     receiverAddress: RECEIVER_ADDRESS,
     burnAddress: BURN_ADDRESS,
-    decimals: TOKEN_DECIMALS,
     chainId: base.id, // 8453
     items: STORE_ITEMS,
     burnPerks: BURN_PERKS,
     holderTiers: HOLDER_TIERS,
+    // Legacy field name preserved for old clients (= token decimals)
+    decimals: TOKEN_DECIMALS,
   };
 }
 
@@ -291,7 +314,7 @@ export async function verifyBurn(
 
   const tokenAddr = TOKEN_ADDRESS.toLowerCase();
   const burnAddr = BURN_ADDRESS.toLowerCase();
-  const expectedRaw = rawAmountForPrice(perk.burnAmount);
+  const expectedRaw = rawTokenAmount(perk.burnAmount); // basedcraft uses its own decimals
 
   let buyer: string | null = null;
   let transferValue: bigint | null = null;
