@@ -68,6 +68,19 @@ function ItemTooltip({ slot, x, y, enchantment }: { slot: InventorySlot; x: numb
       {def.isFood && def.foodRestore && (
         <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#ffaa55' }}>
           🍖 Restores: {def.foodRestore} hunger
+          {def.foodRestore >= 8 && <span style={{ color: '#ff8844', marginLeft: '4px' }}>(Great)</span>}
+          {def.foodRestore >= 5 && def.foodRestore < 8 && <span style={{ color: '#ffcc44', marginLeft: '4px' }}>(Good)</span>}
+          {def.foodRestore < 3 && <span style={{ color: '#888', marginLeft: '4px' }}>(Snack)</span>}
+        </div>
+      )}
+      {def.isRanged && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#ffaa55' }}>
+          🏹 Ranged: {def.projectileDamage ?? 6} dmg
+        </div>
+      )}
+      {def.isShield && (
+        <div style={{ fontFamily: "'VT323', monospace", fontSize: '13px', color: '#55aaff' }}>
+          🛡 Blocks 50% damage
         </div>
       )}
       {enchantment && (
