@@ -1243,10 +1243,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       }
       player.setPosition(safeSp.x, safeSp.y, safeSp.z);
       player.velocity.set(0, 0, 0);
-      // Starter kit: full toolkit so players can dig, build AND craft immediately
+      // Starter kit: full toolkit so players can dig, build AND craft immediately.
+      // Trigger if missing a pickaxe OR missing placeable blocks (so old localStorage
+      // inventories without blocks still get the kit).
       let starterInv = inventoryRef.current;
       const hasPickaxe = starterInv.some(s => s && ITEMS[s.item]?.toolKind === 'pickaxe');
-      if (!hasPickaxe) {
+      const hasPlaceableBlocks = starterInv.some(s => s && ITEMS[s.item]?.isBlock && (s.count ?? 0) > 0);
+      if (!hasPickaxe || !hasPlaceableBlocks) {
         // Tools
         starterInv = addItem(starterInv, 'wooden_pickaxe', 1);
         starterInv = addItem(starterInv, 'wooden_axe', 1);
@@ -5920,6 +5923,28 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
             if (cmd === 'level' || cmd === 'lvl') {
               appendChat({ username: 'system', message: `⭐ Level ${xpInfo.level} | XP: ${xpInfo.xpInLevel}/${xpInfo.xpToNext} (${Math.floor((xpInfo.xpInLevel / Math.max(1, xpInfo.xpToNext)) * 100)}%) | Tier bonus: ${TIER_XP_MULTIPLIER[balanceTier]}x`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'kit' || cmd === 'starter') {
+              // /kit — manually re-give starter kit (anyone can use)
+              let kitInv = inventoryRef.current;
+              kitInv = addItem(kitInv, 'wooden_pickaxe', 1);
+              kitInv = addItem(kitInv, 'wooden_axe', 1);
+              kitInv = addItem(kitInv, 'wooden_sword', 1);
+              kitInv = addItem(kitInv, 'wooden_shovel', 1);
+              kitInv = addItem(kitInv, 'crafting_table', 1);
+              kitInv = addItem(kitInv, 'furnace', 1);
+              kitInv = addItem(kitInv, 'chest', 1);
+              kitInv = addItem(kitInv, 'cobblestone', 32);
+              kitInv = addItem(kitInv, 'planks', 32);
+              kitInv = addItem(kitInv, 'cyan_wood', 8);
+              kitInv = addItem(kitInv, 'coal', 16);
+              kitInv = addItem(kitInv, 'torch', 16);
+              kitInv = addItem(kitInv, 'bread', 8);
+              inventoryRef.current = kitInv;
+              setInventory(kitInv);
+              appendChat({ username: 'system', message: '🎒 Starter kit delivered! Tools + blocks + crafting_table + furnace in inventory', isSystem: true });
               return;
             }
 
