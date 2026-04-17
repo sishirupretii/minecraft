@@ -1298,6 +1298,31 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             setDailyChallenge({ ...saved, current: 0, completed: false });
           } catch {}
         }
+
+        // Daily login streak bonus
+        const streakKey = 'bc_login_streak';
+        const lastLoginKey = 'bc_last_login';
+        const lastLogin = window.localStorage.getItem(lastLoginKey);
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        let streak = parseInt(window.localStorage.getItem(streakKey) || '0');
+        if (lastLogin === yesterday) {
+          streak++;
+        } else if (lastLogin !== today) {
+          streak = 1;
+        }
+        window.localStorage.setItem(streakKey, streak.toString());
+        window.localStorage.setItem(lastLoginKey, today);
+        // Give XP bonus based on streak (capped at 7 days)
+        const streakBonus = Math.min(streak, 7) * 50;
+        if (lastLogin !== today) {
+          const newXp = totalXpRef.current + streakBonus;
+          totalXpRef.current = newXp;
+          setTotalXp(newXp);
+          setTimeout(() => {
+            setToast(`🔥 Login Streak: Day ${streak}! +${streakBonus} XP`);
+            setTimeout(() => setToast(null), 3000);
+          }, 3000); // delay so it shows after initial load
+        }
       }
     };
 
@@ -1880,10 +1905,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       if (slot.item === 'fishing_rod') {
         if (player.isInWater() || player.position.y < SEA_LEVEL + 2) {
           if (fishingCooldownRef.current <= 0) {
-            fishingCooldownRef.current = 3; // 3 second cooldown
+            // Rain = faster fishing, thunder = best fishing
+            const fishCooldown = weatherRef.current === 'thunder' ? 1.5 : weatherRef.current === 'rain' ? 2 : 3;
+            fishingCooldownRef.current = fishCooldown;
             // Enhanced fishing loot table (MC-style: fish/junk/treasure)
             const roll = Math.random();
-            const tierBonus = TIER_XP_MULTIPLIER[balanceTier] > 1 ? 0.05 : 0; // tier gives better odds
+            const weatherBonus = weatherRef.current === 'thunder' ? 0.08 : weatherRef.current === 'rain' ? 0.04 : 0;
+            const tierBonus = (TIER_XP_MULTIPLIER[balanceTier] > 1 ? 0.05 : 0) + weatherBonus;
             let catchItem: ItemType;
             let catchCount = 1;
             let catchMsg = '';
@@ -2883,6 +2911,27 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         }
       }
 
+      // Warden boss proximity warning (within 25 blocks)
+      {
+        let wardenClose = false;
+        for (const mob of wardens.getMobs()) {
+          if (mob.dead) continue;
+          const dx = mob.group.position.x - camera.position.x;
+          const dz = mob.group.position.z - camera.position.z;
+          const dy = mob.group.position.y - camera.position.y;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (dist < 25) {
+            wardenClose = true;
+            break;
+          }
+        }
+        if (wardenClose && Math.floor(elapsed * 2) !== Math.floor((elapsed - dt) * 2)) {
+          // Pulsing darkness effect when warden is near
+          cameraShakeTimer = 0.05;
+          cameraShakeIntensity = 0.01;
+        }
+      }
+
       // Enderman: check if player is looking at one
       {
         const lookDir = new THREE.Vector3();
@@ -3227,6 +3276,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       // Apply tier-based bonuses
       player.miningSpeedMultiplier = TIER_MINING_SPEED[balanceTier];
       player.speedMultiplier *= TIER_SPEED_BONUS[balanceTier];
+
+      // Hunger-based speed penalty: very hungry = slow movement
+      if (hungerFloat <= 2) {
+        player.speedMultiplier *= 0.6; // 40% slower when starving
+      } else if (hungerFloat <= 4) {
+        player.speedMultiplier *= 0.8; // 20% slower when very hungry
+      }
+
+      // Freezing speed penalty
+      if (freezingRef.current > 0.3) {
+        player.speedMultiplier *= Math.max(0.5, 1 - freezingRef.current * 0.5);
+      }
 
       // ---- FOV: spyglass zoom / sprint widen ----
       const isSprinting = Math.abs(player.velocity.x) + Math.abs(player.velocity.z) > 5;
