@@ -846,6 +846,140 @@ export function generateWorld(seed = 1337): Block[] {
     break;
   }
 
+  // 4.9 Generate watchtowers (stone brick towers in plains/mountain, 2-3 per world)
+  const towerCount = 2 + Math.floor(rng() * 2);
+  let towerAttempts = 0;
+  let placedTowers = 0;
+  while (placedTowers < towerCount && towerAttempts < 200) {
+    towerAttempts++;
+    const twx = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const twz = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const twBiome = biomeMap[twx][twz];
+    if (twBiome !== 'plains' && twBiome !== 'mountain') continue;
+    const twH = heightMap[twx][twz];
+    if (twH < 5) continue;
+    // Check not too close to city center
+    if (Math.abs(twx - half) < 30 && Math.abs(twz - half) < 30) continue;
+
+    const towerHeight = 10 + Math.floor(rng() * 5);
+    // 4x4 base tower
+    for (let dy = 0; dy < towerHeight; dy++) {
+      for (let dx = 0; dx < 4; dx++) {
+        for (let dz = 0; dz < 4; dz++) {
+          // Walls only (hollow inside)
+          if (dx > 0 && dx < 3 && dz > 0 && dz < 3 && dy > 0 && dy < towerHeight - 1) continue;
+          blocks.push({ x: twx + dx, y: twH + dy, z: twz + dz, type: 'stone_bricks' });
+        }
+      }
+    }
+    // Door opening
+    blocks.push({ x: twx + 1, y: twH + 1, z: twz, type: 'oak_door' });
+    // Ladder inside
+    for (let dy = 1; dy < towerHeight - 1; dy++) {
+      blocks.push({ x: twx + 1, y: twH + dy, z: twz + 1, type: 'ladder' });
+    }
+    // Torch at top
+    blocks.push({ x: twx + 1, y: twH + towerHeight, z: twz + 1, type: 'torch' });
+    blocks.push({ x: twx + 2, y: twH + towerHeight, z: twz + 2, type: 'torch' });
+    // Chest with loot
+    blocks.push({ x: twx + 2, y: twH + 1, z: twz + 2, type: 'chest' });
+    // Battlements (crenellations at top)
+    for (let dx = 0; dx < 4; dx++) {
+      if (dx % 2 === 0) {
+        blocks.push({ x: twx + dx, y: twH + towerHeight, z: twz, type: 'stone_bricks' });
+        blocks.push({ x: twx + dx, y: twH + towerHeight, z: twz + 3, type: 'stone_bricks' });
+      }
+    }
+    for (let dz = 0; dz < 4; dz++) {
+      if (dz % 2 === 0) {
+        blocks.push({ x: twx, y: twH + towerHeight, z: twz + dz, type: 'stone_bricks' });
+        blocks.push({ x: twx + 3, y: twH + towerHeight, z: twz + dz, type: 'stone_bricks' });
+      }
+    }
+    placedTowers++;
+  }
+
+  // 4.95 Generate abandoned mineshafts (underground tunnels with rails and supports)
+  const mineshaftCount = 2 + Math.floor(rng() * 2);
+  for (let ms = 0; ms < mineshaftCount; ms++) {
+    const msx = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const msz = 10 + Math.floor(rng() * (WORLD_SIZE - 20));
+    const msY = 3 + Math.floor(rng() * 5); // underground level
+    // Check not in city
+    if (Math.abs(msx - half) < 30 && Math.abs(msz - half) < 30) continue;
+
+    // Main corridor (20 blocks long)
+    const corridorLen = 15 + Math.floor(rng() * 10);
+    const dirX = rng() > 0.5 ? 1 : 0;
+    const dirZ = dirX === 1 ? 0 : 1;
+
+    for (let i = 0; i < corridorLen; i++) {
+      const cx = msx + dirX * i;
+      const cz = msz + dirZ * i;
+      if (cx < 0 || cx >= WORLD_SIZE || cz < 0 || cz >= WORLD_SIZE) break;
+
+      // Clear 3-high corridor (3 wide)
+      for (let dy = 0; dy < 3; dy++) {
+        for (let dw = -1; dw <= 1; dw++) {
+          const wx = cx + (dirZ * dw);
+          const wz = cz + (dirX * dw);
+          if (wx >= 0 && wx < WORLD_SIZE && wz >= 0 && wz < WORLD_SIZE) {
+            // Don't push air — just leave space by not having blocks here
+          }
+        }
+      }
+
+      // Support beams every 4 blocks
+      if (i % 4 === 0) {
+        for (let dw = -1; dw <= 1; dw++) {
+          const wx = cx + (dirZ * dw);
+          const wz = cz + (dirX * dw);
+          if (wx >= 0 && wx < WORLD_SIZE && wz >= 0 && wz < WORLD_SIZE) {
+            // Ceiling planks
+            blocks.push({ x: wx, y: msY + 3, z: wz, type: 'planks' });
+          }
+        }
+        // Side supports (fence posts)
+        const lx = cx + dirZ * (-1);
+        const lz = cz + dirX * (-1);
+        const rx = cx + dirZ * 1;
+        const rz = cz + dirX * 1;
+        if (lx >= 0 && lx < WORLD_SIZE && lz >= 0 && lz < WORLD_SIZE) {
+          blocks.push({ x: lx, y: msY, z: lz, type: 'fence' });
+          blocks.push({ x: lx, y: msY + 1, z: lz, type: 'fence' });
+          blocks.push({ x: lx, y: msY + 2, z: lz, type: 'fence' });
+        }
+        if (rx >= 0 && rx < WORLD_SIZE && rz >= 0 && rz < WORLD_SIZE) {
+          blocks.push({ x: rx, y: msY, z: rz, type: 'fence' });
+          blocks.push({ x: rx, y: msY + 1, z: rz, type: 'fence' });
+          blocks.push({ x: rx, y: msY + 2, z: rz, type: 'fence' });
+        }
+      }
+
+      // Torches every 6 blocks
+      if (i % 6 === 0 && i > 0) {
+        blocks.push({ x: cx, y: msY + 2, z: cz, type: 'torch' });
+      }
+    }
+
+    // Loot at the end
+    const endX = msx + dirX * (corridorLen - 1);
+    const endZ = msz + dirZ * (corridorLen - 1);
+    if (endX >= 0 && endX < WORLD_SIZE && endZ >= 0 && endZ < WORLD_SIZE) {
+      blocks.push({ x: endX, y: msY, z: endZ, type: 'chest' });
+    }
+    // Ore deposits near mineshaft
+    for (let od = 0; od < 4; od++) {
+      const ox = msx + Math.floor(rng() * corridorLen * dirX) + Math.floor(rng() * 3 - 1);
+      const oz = msz + Math.floor(rng() * corridorLen * dirZ) + Math.floor(rng() * 3 - 1);
+      if (ox >= 0 && ox < WORLD_SIZE && oz >= 0 && oz < WORLD_SIZE) {
+        const oreType: BlockType = rng() < 0.3 ? 'gold_ore' : rng() < 0.5 ? 'iron_ore' : 'coal_ore';
+        blocks.push({ x: ox, y: msY - 1, z: oz, type: oreType });
+        blocks.push({ x: ox + 1, y: msY - 1, z: oz, type: oreType });
+      }
+    }
+  }
+
   // 5. Generate Base City in the world center
   generateBaseCity(blocks, heightMap, half, rng);
 

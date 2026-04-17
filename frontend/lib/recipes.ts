@@ -229,6 +229,27 @@ export const RECIPES: Recipe[] = [
   { id: 'tnt_craft',    ingredients: [{ item: 'gunpowder', count: 5 }, { item: 'sand_blue', count: 4 }], result: { item: 'tnt', count: 1 }, needsTable: true },
   { id: 'oak_door',     ingredients: [{ item: 'planks', count: 6 }], result: { item: 'oak_door', count: 3 }, needsTable: true },
   { id: 'trapdoor',     ingredients: [{ item: 'planks', count: 3 }], result: { item: 'trapdoor', count: 2 } },
+
+  // Batch 35: More crafting recipes
+  { id: 'stone_bricks',  ingredients: [{ item: 'cobblestone', count: 4 }], result: { item: 'stone_bricks', count: 4 } },
+  { id: 'mossy_stone',   ingredients: [{ item: 'stone_bricks', count: 1 }, { item: 'vine', count: 1 }], result: { item: 'mossy_cobblestone', count: 1 } },
+  { id: 'end_stone',     ingredients: [{ item: 'cobblestone', count: 4 }, { item: 'ender_pearl', count: 1 }], result: { item: 'end_stone', count: 4 }, needsTable: true },
+  { id: 'prismarine',    ingredients: [{ item: 'cobblestone', count: 4 }, { item: 'amethyst_shard', count: 1 }], result: { item: 'prismarine', count: 4 }, needsTable: true },
+  { id: 'sea_lantern_c', ingredients: [{ item: 'prismarine', count: 4 }, { item: 'glowstone', count: 1 }], result: { item: 'sea_lantern', count: 1 }, needsTable: true },
+  { id: 'redstone_lamp_c', ingredients: [{ item: 'glowstone', count: 1 }, { item: 'iron_ingot', count: 4 }], result: { item: 'redstone_lamp', count: 1 }, needsTable: true },
+  { id: 'iron_block',    ingredients: [{ item: 'iron_ingot', count: 9 }], result: { item: 'iron_block', count: 1 }, needsTable: true },
+  { id: 'iron_from_block', ingredients: [{ item: 'iron_block', count: 1 }], result: { item: 'iron_ingot', count: 9 } },
+  { id: 'diamond_block', ingredients: [{ item: 'diamond', count: 9 }], result: { item: 'diamond_block', count: 1 }, needsTable: true },
+  { id: 'diamond_from_block', ingredients: [{ item: 'diamond_block', count: 1 }], result: { item: 'diamond', count: 9 } },
+  { id: 'nether_bricks_c', ingredients: [{ item: 'bricks', count: 2 }, { item: 'coal', count: 2 }], result: { item: 'nether_bricks', count: 4 }, needsFurnace: true },
+  { id: 'soul_sand_c',   ingredients: [{ item: 'sand_blue', count: 4 }, { item: 'coal', count: 2 }], result: { item: 'soul_sand', count: 4 }, needsFurnace: true },
+  { id: 'barrel',        ingredients: [{ item: 'planks', count: 6 }, { item: 'stick', count: 2 }], result: { item: 'barrel', count: 1 }, needsTable: true },
+  { id: 'hay_bale',      ingredients: [{ item: 'wheat_item', count: 9 }], result: { item: 'hay_bale', count: 1 }, needsTable: true },
+  { id: 'banner_craft',  ingredients: [{ item: 'wool', count: 6 }, { item: 'stick', count: 1 }], result: { item: 'banner', count: 1 }, needsTable: true },
+  { id: 'lever_craft',   ingredients: [{ item: 'stick', count: 1 }, { item: 'cobblestone', count: 1 }], result: { item: 'lever', count: 1 } },
+  { id: 'terracotta_c',  ingredients: [{ item: 'clay_ball', count: 4 }], result: { item: 'terracotta', count: 1 }, needsFurnace: true },
+  { id: 'emerald_from_ore', ingredients: [{ item: 'emerald_ore', count: 1 }], result: { item: 'emerald', count: 2 }, needsFurnace: true },
+  { id: 'copper_ingot_c', ingredients: [{ item: 'copper_ore', count: 1 }, { item: 'coal', count: 1 }], result: { item: 'copper_ingot', count: 1 }, needsFurnace: true },
 ];
 
 /** Check if the player has enough materials to craft a recipe. */
