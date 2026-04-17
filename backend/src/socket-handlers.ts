@@ -12,7 +12,7 @@ import {
   WORLD_HEIGHT,
   WORLD_SIZE,
 } from './types';
-import { verifyPurchase, recordPurchase, publicStoreConfig, getItem } from './store';
+import { verifyPurchase, recordPurchase, publicStoreConfig, getItem, verifyBurn, recordBurn, getHolderInfo } from './store';
 
 const players: Map<string, PlayerState> = new Map();
 const lastMoveBroadcast: Map<string, number> = new Map();
@@ -503,6 +503,88 @@ export function registerSocketHandlers(io: Server) {
       } catch (err) {
         console.error('[store:purchases] err:', err);
         socket.emit('store:purchases', []);
+      }
+    });
+
+    socket.on('store:burns', async () => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      try {
+        // User's own burn history + their total burned
+        const { data: rows } = await supabase
+          .from('token_burns')
+          .select('tx_hash, perk_id, amount, created_at')
+          .eq('username', self.username)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        const { data: totalRow } = await supabase
+          .from('user_burn_totals')
+          .select('total_burned, burn_count')
+          .eq('username', self.username)
+          .maybeSingle();
+        socket.emit('store:burns', {
+          history: rows ?? [],
+          totalBurned: totalRow?.total_burned?.toString() ?? '0',
+          burnCount: totalRow?.burn_count ?? 0,
+        });
+      } catch (err) {
+        console.error('[store:burns] err:', err);
+        socket.emit('store:burns', { history: [], totalBurned: '0', burnCount: 0 });
+      }
+    });
+
+    socket.on('store:holder_info', async () => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      if (!self.walletAddress) {
+        socket.emit('store:holder_info', { balance: '0', balanceWhole: 0, tier: { id: 'none', label: 'Visitor', minHolding: 0, color: '#888888', perks: [] } });
+        return;
+      }
+      try {
+        const info = await getHolderInfo(self.walletAddress);
+        socket.emit('store:holder_info', info);
+      } catch (err) {
+        console.error('[store:holder_info] err:', err);
+      }
+    });
+
+    socket.on('store:burn_verify', async (p: { txHash: string; perkId: string }) => {
+      const self = players.get(socket.id);
+      if (!self) {
+        socket.emit('store:burn_result', { ok: false, reason: 'Not connected' });
+        return;
+      }
+      if (!p?.txHash || !p?.perkId) {
+        socket.emit('store:burn_result', { ok: false, reason: 'Missing fields' });
+        return;
+      }
+      try {
+        const result = await verifyBurn(p.txHash, p.perkId);
+        if (!result.ok || !result.perk || !result.buyer || !result.amount) {
+          socket.emit('store:burn_result', { ok: false, reason: result.reason ?? 'Verification failed', txHash: p.txHash });
+          return;
+        }
+        const inserted = await recordBurn({
+          txHash: p.txHash,
+          username: self.username,
+          buyer: result.buyer,
+          perk: result.perk,
+          amount: result.amount,
+        });
+        if (!inserted) {
+          socket.emit('store:burn_result', { ok: false, reason: 'Failed to record burn', txHash: p.txHash });
+          return;
+        }
+        socket.emit('store:burn_result', {
+          ok: true,
+          txHash: p.txHash,
+          perkId: result.perk.id,
+          label: result.perk.label,
+          icon: result.perk.icon,
+        });
+      } catch (err: any) {
+        console.error('[store:burn_verify] err:', err);
+        socket.emit('store:burn_result', { ok: false, reason: `Server error: ${err?.message ?? 'unknown'}`, txHash: p.txHash });
       }
     });
 

@@ -37,6 +37,63 @@ export interface StoreItem {
   description: string;
 }
 
+// Standard ETH burn address
+export const BURN_ADDRESS = '0x000000000000000000000000000000000000dEaD' as `0x${string}`;
+
+// ---------- Burn-to-Unlock catalog ----------
+// Users SEND tokens to 0x...dead address. Gone forever. In exchange: prestige
+// badges, permanent in-game perks. Creates supply pressure + visible status.
+export interface BurnPerk {
+  id: string;
+  label: string;
+  icon: string;
+  description: string;
+  burnAmount: number;       // tokens burned (whole units)
+  perkType: 'badge' | 'cosmetic' | 'ability' | 'trophy';
+}
+
+export const BURN_PERKS: BurnPerk[] = [
+  { id: 'badge_bronze',  label: 'Bronze Badge',  icon: '🥉', burnAmount: 100,   perkType: 'badge',    description: 'Bronze username tag + bronze aura' },
+  { id: 'badge_silver',  label: 'Silver Badge',  icon: '🥈', burnAmount: 500,   perkType: 'badge',    description: 'Silver username tag + silver aura' },
+  { id: 'badge_gold',    label: 'Gold Badge',    icon: '🥇', burnAmount: 2000,  perkType: 'badge',    description: 'Gold username tag + gold aura + chat highlight' },
+  { id: 'badge_diamond', label: 'Diamond Badge', icon: '💎', burnAmount: 10000, perkType: 'badge',    description: 'Diamond tag + diamond aura + priority chat' },
+  { id: 'perm_fly',      label: 'Permanent Fly', icon: '🕊️', burnAmount: 5000,  perkType: 'ability',  description: 'Unlocks /fly permanently (bypasses tier gate)' },
+  { id: 'crown_legend',  label: 'Legend Crown',  icon: '👑', burnAmount: 50000, perkType: 'trophy',   description: 'Visible floating crown above your head (all players see it)' },
+  { id: 'rainbow_name',  label: 'Rainbow Name',  icon: '🌈', burnAmount: 3000,  perkType: 'cosmetic', description: 'Rainbow-animated username in chat + leaderboards' },
+];
+
+export function getBurnPerk(id: string): BurnPerk | undefined {
+  return BURN_PERKS.find((p) => p.id === id);
+}
+
+// ---------- Token Holder Tiers ----------
+// Read wallet balance via RPC; map to tier. Pure HODL incentive — no locking,
+// user can sell any time but loses the tier while balance < threshold.
+export interface HolderTier {
+  id: string;
+  label: string;
+  minHolding: number;      // whole tokens
+  color: string;
+  perks: string[];
+}
+
+export const HOLDER_TIERS: HolderTier[] = [
+  { id: 'none',    label: 'Visitor', minHolding: 0,      color: '#888888', perks: [] },
+  { id: 'rookie',  label: 'Rookie',  minHolding: 100,    color: '#8fd97f', perks: ['+10% XP', '+1 slot kept on death'] },
+  { id: 'pro',     label: 'Pro',     minHolding: 1000,   color: '#5c9cff', perks: ['+25% XP', '+10 slots kept', 'Bronze aura'] },
+  { id: 'whale',   label: 'Whale',   minHolding: 10000,  color: '#ffd700', perks: ['+50% XP', 'All slots kept', 'Gold aura', '/fly unlocked'] },
+  { id: 'titan',   label: 'Titan',   minHolding: 100000, color: '#ff44aa', perks: ['+100% XP', 'Invulnerable on respawn (30s)', 'Titan crown', 'All perks'] },
+];
+
+export function tierForBalance(rawBalance: bigint): HolderTier {
+  const whole = Number(rawBalance / 10n ** BigInt(TOKEN_DECIMALS));
+  let result = HOLDER_TIERS[0];
+  for (const t of HOLDER_TIERS) {
+    if (whole >= t.minHolding) result = t;
+  }
+  return result;
+}
+
 export const STORE_ITEMS: StoreItem[] = [
   // Basics
   { id: 'starter_pack', label: 'Starter Pack', gameItem: 'cobblestone', count: 64, price: 10, icon: '🧱', description: '64 Cobblestone + tool kit' },
@@ -193,8 +250,126 @@ export function publicStoreConfig() {
   return {
     tokenAddress: TOKEN_ADDRESS,
     receiverAddress: RECEIVER_ADDRESS,
+    burnAddress: BURN_ADDRESS,
     decimals: TOKEN_DECIMALS,
     chainId: base.id, // 8453
     items: STORE_ITEMS,
+    burnPerks: BURN_PERKS,
+    holderTiers: HOLDER_TIERS,
   };
+}
+
+// ---------- Burn verification ----------
+/**
+ * Verify a user sent the required tokens to BURN_ADDRESS and unlock a perk.
+ * Same logic as purchase verification but recipient is 0x...dead.
+ */
+export async function verifyBurn(
+  txHash: string,
+  perkId: string,
+): Promise<{ ok: boolean; reason?: string; perk?: BurnPerk; buyer?: string; amount?: string }> {
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return { ok: false, reason: 'Invalid tx hash' };
+  }
+  const perk = getBurnPerk(perkId);
+  if (!perk) return { ok: false, reason: 'Unknown perk' };
+
+  const { data: existing } = await supabase
+    .from('token_burns')
+    .select('id')
+    .eq('tx_hash', txHash.toLowerCase())
+    .maybeSingle();
+  if (existing) return { ok: false, reason: 'Burn tx already redeemed' };
+
+  let receipt;
+  try {
+    receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
+  } catch (e: any) {
+    return { ok: false, reason: `Tx not found: ${e?.message ?? 'unknown'}` };
+  }
+  if (!receipt || receipt.status !== 'success') return { ok: false, reason: 'Tx failed or not found' };
+
+  const tokenAddr = TOKEN_ADDRESS.toLowerCase();
+  const burnAddr = BURN_ADDRESS.toLowerCase();
+  const expectedRaw = rawAmountForPrice(perk.burnAmount);
+
+  let buyer: string | null = null;
+  let transferValue: bigint | null = null;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== tokenAddr) continue;
+    try {
+      const decoded = decodeEventLog({ abi: ERC20_ABI, data: log.data, topics: log.topics });
+      if (decoded.eventName !== 'Transfer') continue;
+      const args = decoded.args as { from: `0x${string}`; to: `0x${string}`; value: bigint };
+      if (args.to.toLowerCase() !== burnAddr) continue;
+      if (args.value < expectedRaw) continue;
+      buyer = args.from;
+      transferValue = args.value;
+      break;
+    } catch {
+      /* skip */
+    }
+  }
+  if (!buyer || transferValue === null) {
+    return {
+      ok: false,
+      reason: `No Transfer of ≥${perk.burnAmount} tokens to ${BURN_ADDRESS} found`,
+    };
+  }
+  return { ok: true, perk, buyer: getAddress(buyer), amount: transferValue.toString() };
+}
+
+export async function recordBurn(params: {
+  txHash: string;
+  username: string;
+  buyer: string;
+  perk: BurnPerk;
+  amount: string;
+}): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('token_burns')
+    .insert({
+      tx_hash: params.txHash.toLowerCase(),
+      username: params.username,
+      buyer_address: params.buyer.toLowerCase(),
+      amount: params.amount,
+      perk_id: params.perk.id,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error('[store] recordBurn err:', error.message);
+    return false;
+  }
+  return !!data;
+}
+
+// ---------- Token holder tier (read wallet balance via RPC) ----------
+const ERC20_READ_ABI = parseAbi(['function balanceOf(address) view returns (uint256)']);
+
+export async function getHolderInfo(walletAddress: string): Promise<{
+  balance: string;
+  balanceWhole: number;
+  tier: HolderTier;
+}> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+    return { balance: '0', balanceWhole: 0, tier: HOLDER_TIERS[0] };
+  }
+  try {
+    const raw = await client.readContract({
+      address: TOKEN_ADDRESS,
+      abi: ERC20_READ_ABI,
+      functionName: 'balanceOf',
+      args: [walletAddress as `0x${string}`],
+    });
+    const tier = tierForBalance(raw as bigint);
+    return {
+      balance: (raw as bigint).toString(),
+      balanceWhole: Number((raw as bigint) / 10n ** BigInt(TOKEN_DECIMALS)),
+      tier,
+    };
+  } catch (e) {
+    console.error('[store] getHolderInfo err:', e);
+    return { balance: '0', balanceWhole: 0, tier: HOLDER_TIERS[0] };
+  }
 }

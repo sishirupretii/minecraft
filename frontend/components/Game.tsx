@@ -204,6 +204,52 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [storeConfig, setStoreConfig] = useState<StoreConfig | null>(null);
   const [storeHistory, setStoreHistory] = useState<Array<{ tx_hash: string; item_id: string; item_count: number; token_amount: string; created_at: string; delivered: boolean }>>([]);
   const [storeResult, setStoreResult] = useState<{ ok: boolean; reason?: string; label?: string } | null>(null);
+  const [holderInfo, setHolderInfo] = useState<{ balance: string; balanceWhole: number; tier: { id: string; label: string; minHolding: number; color: string; perks: string[] } } | null>(null);
+  const [burnTotals, setBurnTotals] = useState<{ totalBurned: string; burnCount: number }>({ totalBurned: '0', burnCount: 0 });
+  const [burnHistory, setBurnHistory] = useState<Array<{ tx_hash: string; perk_id: string; amount: string; created_at: string }>>([]);
+  // Live token price (from DexScreener)
+  const [tokenPrice, setTokenPrice] = useState<{ priceUsd: number; change24h: number; symbol: string; liquidityUsd?: number; volume24hUsd?: number } | null>(null);
+  // Holder tier XP multiplier: +10% rookie, +25% pro, +50% whale, +100% titan
+  const holderXpMult = holderInfo
+    ? (holderInfo.tier.id === 'rookie' ? 1.10
+      : holderInfo.tier.id === 'pro'    ? 1.25
+      : holderInfo.tier.id === 'whale'  ? 1.50
+      : holderInfo.tier.id === 'titan'  ? 2.00
+      : 1.0)
+    : 1.0;
+  const holderXpMultRef = useRef(holderXpMult);
+  useEffect(() => { holderXpMultRef.current = holderXpMult; }, [holderXpMult]);
+
+  // Poll DexScreener for our token's price on Base every 30s
+  useEffect(() => {
+    const TOKEN_ADDR = '0x53b83E4C2402DcF4Fe17755d51dd92d25c1a67c8';
+    let cancel = false;
+    const fetchPrice = async () => {
+      try {
+        const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${TOKEN_ADDR}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const pairs: any[] = data?.pairs ?? [];
+        // Use the pair with highest liquidity on Base
+        const basePairs = pairs.filter(p => p?.chainId === 'base' || p?.chainId === 8453 || p?.chainId === '8453');
+        const best = (basePairs.length ? basePairs : pairs)
+          .sort((a: any, b: any) => (Number(b?.liquidity?.usd ?? 0) - Number(a?.liquidity?.usd ?? 0)))[0];
+        if (!best || cancel) return;
+        setTokenPrice({
+          priceUsd: Number(best.priceUsd ?? 0),
+          change24h: Number(best.priceChange?.h24 ?? 0),
+          symbol: best.baseToken?.symbol ?? 'BASED',
+          liquidityUsd: Number(best.liquidity?.usd ?? 0),
+          volume24hUsd: Number(best.volume?.h24 ?? 0),
+        });
+      } catch {
+        /* silent — no price yet or network error */
+      }
+    };
+    fetchPrice();
+    const iv = setInterval(fetchPrice, 30_000);
+    return () => { cancel = true; clearInterval(iv); };
+  }, []);
   const [gameVolume, setGameVolume] = useState(1.0);
   const [gameFov, setGameFov] = useState(75);
   const [renderDist, setRenderDist] = useState(90);
@@ -1708,9 +1754,28 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setStoreResult({ ok: false, reason: result?.reason ?? 'Purchase failed' });
       }
     };
+    const onStoreBurns = (payload: any) => {
+      setBurnTotals({ totalBurned: payload?.totalBurned ?? '0', burnCount: payload?.burnCount ?? 0 });
+      setBurnHistory(payload?.history ?? []);
+    };
+    const onHolderInfo = (info: any) => setHolderInfo(info);
+    const onBurnResult = (result: any) => {
+      if (result?.ok) {
+        setStoreResult({ ok: true, label: `🔥 ${result.label} unlocked!` });
+        setToast(`🔥 BURNED — ${result.label} now yours forever`);
+        setTimeout(() => setToast(null), 4500);
+        socket.emit('store:burns');
+        socket.emit('store:holder_info');
+      } else {
+        setStoreResult({ ok: false, reason: result?.reason ?? 'Burn verification failed' });
+      }
+    };
     socket.on('store:config', onStoreConfig);
     socket.on('store:purchases', onStorePurchases);
     socket.on('store:result', onStoreResult);
+    socket.on('store:burns', onStoreBurns);
+    socket.on('store:holder_info', onHolderInfo);
+    socket.on('store:burn_result', onBurnResult);
 
     socket.on('leaderboard:data', onLeaderboardData);
     socket.on('achievement:data', onAchievementData);
@@ -1728,7 +1793,12 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
 
     // Request achievements on connect
     setTimeout(() => { socket.emit('achievement:list'); }, 2000);
-    setTimeout(() => { socket.emit('store:config'); socket.emit('store:purchases'); }, 2500);
+    setTimeout(() => {
+      socket.emit('store:config');
+      socket.emit('store:purchases');
+      socket.emit('store:burns');
+      socket.emit('store:holder_info');
+    }, 2500);
 
     const refreshInterval = setInterval(refreshOnlineList, 1000);
 
@@ -1934,7 +2004,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         const baseXp = BLOCK_XP[t] ?? 0;
         // Thunderstorm bonus: 2x XP for wallet holders during storms
         const stormBonus = (weatherRef.current === 'thunder' && walletAddress) ? 2 : 1;
-        const xpGain = Math.round(baseXp * TIER_XP_MULTIPLIER[balanceTier] * stormBonus * comboMultiplier);
+        const xpGain = Math.round(baseXp * TIER_XP_MULTIPLIER[balanceTier] * stormBonus * comboMultiplier * holderXpMultRef.current);
         if (xpGain > 0) {
           const newXp = totalXpRef.current + xpGain;
           totalXpRef.current = newXp;
@@ -3070,7 +3140,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               'Iron Golem': 20, 'Warden': 50, 'Wolf': 3, 'Villager': 1,
             };
             const baseXp = MOB_XP[mobName] ?? 5;
-            const mobXp = Math.round(baseXp * TIER_XP_MULTIPLIER[balanceTier] * streakBonus * (isCritical ? 1.5 : 1));
+            const mobXp = Math.round(baseXp * TIER_XP_MULTIPLIER[balanceTier] * streakBonus * (isCritical ? 1.5 : 1) * holderXpMultRef.current);
             const newXp = totalXpRef.current + mobXp;
             totalXpRef.current = newXp;
             setTotalXp(newXp);
@@ -4868,13 +4938,15 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         setBountyBoardOpen(v => !v);
       }
       if (e.key.toLowerCase() === 'u') {
-        // Open store; fetch latest config + history
+        // Open store; fetch latest config + history + burns + holder
         setStoreOpen(v => {
           const next = !v;
           if (next) {
             const s = getSocket();
             s.emit('store:config');
             s.emit('store:purchases');
+            s.emit('store:burns');
+            s.emit('store:holder_info');
           }
           return next;
         });
@@ -4936,6 +5008,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       socket.off('store:config', onStoreConfig);
       socket.off('store:purchases', onStorePurchases);
       socket.off('store:result', onStoreResult);
+      socket.off('store:burns', onStoreBurns);
+      socket.off('store:holder_info', onHolderInfo);
+      socket.off('store:burn_result', onBurnResult);
       socket.off('achievement:data', onAchievementData);
       socket.off('land:data', onLandData);
       socket.off('land:claimed', onLandClaimed);
@@ -5438,6 +5513,53 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             animationDuration: '1.5s',
           }}
         />
+      )}
+
+      {/* Live token price ticker — bottom-right, clickable to open store */}
+      {tokenPrice && (
+        <button
+          onClick={() => {
+            const s = getSocket();
+            s.emit('store:config'); s.emit('store:purchases'); s.emit('store:burns'); s.emit('store:holder_info');
+            setStoreOpen(true);
+          }}
+          className="pointer-events-auto absolute z-20"
+          style={{
+            bottom: '110px', right: '10px',
+            padding: '6px 10px',
+            background: 'rgba(0,0,0,0.65)',
+            border: `1px solid ${tokenPrice.change24h >= 0 ? '#4ade80' : '#ef4444'}`,
+            borderRadius: '4px',
+            fontFamily: "'VT323', monospace",
+            fontSize: '14px',
+            color: '#fff',
+            cursor: 'pointer',
+            minWidth: '160px',
+            textShadow: '1px 1px 0 #000',
+            boxShadow: `0 0 8px ${tokenPrice.change24h >= 0 ? 'rgba(74,222,128,0.25)' : 'rgba(239,68,68,0.25)'}`,
+          }}
+          title="Click to open Store"
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#5c9cff', fontFamily: "'Press Start 2P', monospace", fontSize: '8px' }}>
+              ${tokenPrice.symbol}
+            </span>
+            <span style={{ color: tokenPrice.change24h >= 0 ? '#4ade80' : '#ef4444', fontSize: '12px' }}>
+              {tokenPrice.change24h >= 0 ? '▲' : '▼'} {Math.abs(tokenPrice.change24h).toFixed(2)}%
+            </span>
+          </div>
+          <div style={{ fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>
+            ${tokenPrice.priceUsd < 0.01 ? tokenPrice.priceUsd.toExponential(3) : tokenPrice.priceUsd.toFixed(6)}
+          </div>
+          {typeof tokenPrice.volume24hUsd === 'number' && tokenPrice.volume24hUsd > 0 && (
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.45)' }}>
+              24h Vol: ${Math.round(tokenPrice.volume24hUsd).toLocaleString()}
+            </div>
+          )}
+          <div style={{ fontSize: '10px', color: '#88aaff', marginTop: '2px' }}>
+            Press U · 🛒 Store
+          </div>
+        </button>
       )}
 
       {/* Creeper proximity warning — pulsing green vignette */}
@@ -6332,9 +6454,17 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         walletConnected={!!walletAddress}
         lastResult={storeResult}
         onClearResult={() => setStoreResult(null)}
+        holderInfo={holderInfo}
+        burnTotals={burnTotals}
+        burnHistory={burnHistory}
         onBuyStart={(itemId, txHash) => {
           const s = getSocket();
           s.emit('store:verify', { txHash, itemId });
+          setStoreResult(null);
+        }}
+        onBurnStart={(perkId, txHash) => {
+          const s = getSocket();
+          s.emit('store:burn_verify', { txHash, perkId });
           setStoreResult(null);
         }}
       />
