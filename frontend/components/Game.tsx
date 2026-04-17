@@ -1427,6 +1427,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         const def = getAchievementDef(achId);
         if (def) {
           setAchievementToast({ id: achId, name: def.name, description: def.description, icon: def.icon });
+          audio.playAchievement();
           setTimeout(() => setAchievementToast(null), 5000);
         }
       }
@@ -2114,7 +2115,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               leverStatesRef.current.add(key);
               setToast('⚡ Lever: ON');
             }
-            audio.playBlockPlace('cobblestone');
+            audio.playBlockPlace('stone_bricks');
             setTimeout(() => setToast(null), 1500);
             return;
           }
@@ -2218,7 +2219,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               inv = addItem(inv, loot.item, loot.count);
               inventoryRef.current = inv;
               setInventory(inv);
-              audio.playBlockPlace('chest');
+              audio.playChest();
               setToast(`📦 Barrel: Found ${loot.count} ${loot.label}!`);
               setTimeout(() => setToast(null), 2500);
               return;
@@ -2529,13 +2530,24 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             });
             if (killStreak === 3) {
               setToast('🔥 Triple Kill!');
+              audio.playKillStreak();
               setTimeout(() => setToast(null), 2000);
             } else if (killStreak === 5) {
               setToast('🔥🔥 Killing Spree!');
+              audio.playKillStreak();
               setTimeout(() => setToast(null), 2000);
+            } else if (killStreak === 7) {
+              setToast('⚡ DOMINATING!');
+              audio.playKillStreak();
+              setTimeout(() => setToast(null), 2500);
             } else if (killStreak === 10) {
               setToast('💀 UNSTOPPABLE!');
+              audio.playKillStreak();
               setTimeout(() => setToast(null), 2500);
+            } else if (killStreak === 15) {
+              setToast('👑 GODLIKE!');
+              audio.playKillStreak();
+              setTimeout(() => setToast(null), 3000);
             }
             const mobXp = Math.round(5 * TIER_XP_MULTIPLIER[balanceTier] * streakBonus);
             const newXp = totalXpRef.current + mobXp;
@@ -4913,7 +4925,42 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             }
 
             if (cmd === 'help') {
-              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gamemode, /help', isSystem: true });
+              appendChat({ username: 'system', message: '📖 Commands: /tp, /time, /seed, /stats, /tier, /bal, /pos, /home, /kill, /heal, /give, /weather, /xp, /clear, /fly, /gm, /online, /me, /streak, /dist, /ach, /help', isSystem: true });
+              return;
+            }
+
+            if (cmd === 'online' || cmd === 'who' || cmd === 'list') {
+              const playerNames = onlinePlayers.map(p => p.username).join(', ');
+              appendChat({ username: 'system', message: `👥 Online (${onlinePlayers.length + 1}): ${username}${playerNames ? ', ' + playerNames : ''}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'me') {
+              // /me <action> — roleplay action message
+              const action = parts.slice(1).join(' ');
+              if (!action) {
+                appendChat({ username: 'system', message: '❌ Usage: /me <action>', isSystem: true });
+                return;
+              }
+              const socket = getSocket();
+              socket.emit('chat:send', { message: `* ${username} ${action}` });
+              return;
+            }
+
+            if (cmd === 'streak') {
+              const s = statsRef.current;
+              appendChat({ username: 'system', message: `🔥 Current max kill streak: ${s.maxKillStreak} | Fish caught: ${s.fishCaught} | Food eaten: ${s.foodEaten}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'distance' || cmd === 'dist') {
+              const s = statsRef.current;
+              appendChat({ username: 'system', message: `📏 Distance walked: ${Math.round(s.distanceWalked)} blocks | Highest: Y=${Math.round(s.highestY)} | Deepest: Y=${Math.round(s.lowestY)}`, isSystem: true });
+              return;
+            }
+
+            if (cmd === 'achievements' || cmd === 'ach') {
+              appendChat({ username: 'system', message: `🏆 Achievements: ${earnedRef.current.size}/${ACHIEVEMENT_DEFS.length} (${Math.round((earnedRef.current.size / ACHIEVEMENT_DEFS.length) * 100)}%)`, isSystem: true });
               return;
             }
 

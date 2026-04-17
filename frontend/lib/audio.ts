@@ -527,6 +527,65 @@ export class AudioEngine {
     });
   }
 
+  /** Achievement unlock fanfare */
+  playAchievement() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Triumphant ascending notes: C5 → E5 → G5 → C6 (faster, brighter)
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, now + i * 0.08);
+      gain.gain.setValueAtTime(0.04, now + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.25);
+      osc.connect(gain).connect(this.masterGain!);
+      osc.start(now + i * 0.08);
+      osc.stop(now + i * 0.08 + 0.25);
+    });
+    // Extra shimmer on last note
+    const shimmer = ctx.createOscillator();
+    const sGain = ctx.createGain();
+    shimmer.type = 'sine';
+    shimmer.frequency.setValueAtTime(2093, now + 0.32); // C7
+    sGain.gain.setValueAtTime(0.03, now + 0.32);
+    sGain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+    shimmer.connect(sGain).connect(this.masterGain!);
+    shimmer.start(now + 0.32);
+    shimmer.stop(now + 0.7);
+  }
+
+  /** Kill streak announcement sound */
+  playKillStreak() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    // Aggressive double-hit sound
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+    gain.gain.setValueAtTime(0.06, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc.connect(gain).connect(this.masterGain!);
+    osc.start(now);
+    osc.stop(now + 0.15);
+    // Second hit
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sawtooth';
+    osc2.frequency.setValueAtTime(600, now + 0.1);
+    osc2.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+    gain2.gain.setValueAtTime(0.05, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc2.connect(gain2).connect(this.masterGain!);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.25);
+  }
+
   /** Play eating/munching sound */
   playEat() {
     if (!this.ctx || this.muted) return;
