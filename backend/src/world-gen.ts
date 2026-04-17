@@ -1,6 +1,8 @@
 import { createNoise2D } from 'simplex-noise';
 import { Block, BlockType, WORLD_HEIGHT, WORLD_SIZE } from './types';
 
+const SEA_LEVEL = 12; // Y-level for water surface
+
 // Seeded-ish PRNG so generation is deterministic per boot if desired.
 function mulberry32(seed: number) {
   return function () {
@@ -633,6 +635,70 @@ export function generateWorld(seed = 1337): Block[] {
     blocks.push({ x: hx + 1, y: baseY + 1, z: hz - 1, type: 'chest' });
 
     placedHuts.push({ x: hx, z: hz });
+  }
+
+  // 4.55 Generate giant mushrooms in swamp biome (2-4 per world)
+  const giantMushroomCount = 2 + Math.floor(rng() * 3);
+  let mushAttempts = 0;
+  while (mushAttempts < giantMushroomCount * 40) {
+    mushAttempts++;
+    const mx = 5 + Math.floor(rng() * (WORLD_SIZE - 10));
+    const mz = 5 + Math.floor(rng() * (WORLD_SIZE - 10));
+    if (biomeMap[mx][mz] !== 'swamp') continue;
+    const mBaseY = heightMap[mx][mz];
+    const isRed = rng() > 0.5;
+    const mushType: BlockType = isRed ? 'mushroom_red' : 'mushroom_brown';
+    const stemHeight = 4 + Math.floor(rng() * 3); // 4-6 tall stem
+
+    // Stem
+    for (let dy = 0; dy < stemHeight; dy++) {
+      blocks.push({ x: mx, y: mBaseY + dy, z: mz, type: 'planks' }); // mushroom stem = planks color
+    }
+    // Cap (3x3 on top for red, 5x5 flat for brown)
+    const capRadius = isRed ? 2 : 3;
+    for (let dx = -capRadius; dx <= capRadius; dx++) {
+      for (let dz = -capRadius; dz <= capRadius; dz++) {
+        // Round corners
+        if (Math.abs(dx) === capRadius && Math.abs(dz) === capRadius) continue;
+        const bx = mx + dx, bz = mz + dz;
+        if (bx < 0 || bx >= WORLD_SIZE || bz < 0 || bz >= WORLD_SIZE) continue;
+        if (isRed) {
+          // Dome shape for red mushroom
+          const capY = mBaseY + stemHeight + (Math.abs(dx) <= 1 && Math.abs(dz) <= 1 ? 1 : 0);
+          blocks.push({ x: bx, y: capY, z: bz, type: mushType });
+        } else {
+          // Flat cap for brown mushroom
+          blocks.push({ x: bx, y: mBaseY + stemHeight, z: bz, type: mushType });
+        }
+      }
+    }
+    break; // Only place one attempt at a time
+  }
+
+  // 4.56 Generate coral reef patches near ocean areas (3-5 clusters)
+  const coralCount = 3 + Math.floor(rng() * 3);
+  for (let c = 0; c < coralCount; c++) {
+    const cx = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const cz = 8 + Math.floor(rng() * (WORLD_SIZE - 16));
+    const cH = heightMap[cx][cz];
+    // Only place in low-lying areas (ocean floor)
+    if (cH > SEA_LEVEL - 2) continue;
+    const clusterSize = 3 + Math.floor(rng() * 4);
+    for (let i = 0; i < clusterSize; i++) {
+      const rx = cx + Math.floor(rng() * 6) - 3;
+      const rz = cz + Math.floor(rng() * 6) - 3;
+      if (rx < 0 || rx >= WORLD_SIZE || rz < 0 || rz >= WORLD_SIZE) continue;
+      const rH = heightMap[rx]?.[rz];
+      if (!rH || rH > SEA_LEVEL - 2) continue;
+      // Place colorful blocks as coral
+      const coralTypes: BlockType[] = ['prismarine', 'sea_lantern', 'sponge', 'moss_block'];
+      const coralType = coralTypes[Math.floor(rng() * coralTypes.length)];
+      blocks.push({ x: rx, y: rH, z: rz, type: coralType });
+      // Sometimes stack for coral height
+      if (rng() < 0.4) {
+        blocks.push({ x: rx, y: rH + 1, z: rz, type: coralType });
+      }
+    }
   }
 
   // 4.6 Generate desert pyramids (1-2 in desert biomes)

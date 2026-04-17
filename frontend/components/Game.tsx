@@ -1487,6 +1487,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
             setInventory(afterTool);
             if (broke) {
               audio.playBlockBreak('royal_brick');
+              setToast(`🔨 ${def.label} broke!`);
+              setTimeout(() => setToast(null), 2000);
+            } else {
+              // Warning when durability is low (< 10%)
+              const newSlot = afterTool[selectedRef.current];
+              if (newSlot && newSlot.durability !== undefined && def.durability) {
+                const pct = newSlot.durability / def.durability;
+                if (pct <= 0.1 && pct > 0.05) {
+                  setToast(`⚠️ ${def.label} is about to break!`);
+                  setTimeout(() => setToast(null), 1500);
+                }
+              }
             }
           }
         }
@@ -1932,6 +1944,7 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
                 elapsed += skip;
                 elapsedRef.current = elapsed;
               }
+              insomniaNights = 0; // Reset insomnia on sleep
               setToast('🛏️ Spawn set! Good morning!');
             } else {
               setToast('🛏️ Spawn point set! (Can only sleep at night)');
@@ -2516,6 +2529,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     // Kill streak tracking: consecutive kills within 8s
     let killStreak = 0;
     let killStreakTimer = 0;
+    // Insomnia: tracks how many nights player hasn't slept (more phantoms)
+    let insomniaNights = 0;
+    let lastNightCheck = false;
     // Mining combo: consecutive blocks within 3s increase XP bonus
     let miningCombo = 0;
     let miningComboTimer = 0;
@@ -2573,6 +2589,9 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           lastZombieSpawn = elapsed;
         }
       }
+      // Reset insomnia night flag when day starts
+      if (!isNight) lastNightCheck = false;
+
       zombies.update(dt, camera.position);
       skeletons.update(dt, camera.position);
       creepers.update(dt, camera.position);
@@ -2599,8 +2618,14 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
         if (endermen.getMobs().length < 2) endermen.spawnNight(1, camera.position.x, camera.position.z);
         if (slimes.getMobs().length < 3) slimes.spawnNight(2, camera.position.x, camera.position.z);
         if (witches.getMobs().length < 2) witches.spawnNight(1, camera.position.x, camera.position.z);
-        // Phantoms spawn at night (swoop from sky)
-        if (phantoms.getMobs().length < 2) phantoms.spawnFlying(1, camera.position.x, camera.position.z, 30);
+        // Track insomnia (night transitions without sleeping)
+        if (!lastNightCheck) {
+          insomniaNights++;
+          lastNightCheck = true;
+        }
+        // Phantoms spawn at night — more with insomnia!
+        const phantomCap = Math.min(6, 2 + insomniaNights);
+        if (phantoms.getMobs().length < phantomCap) phantoms.spawnFlying(1, camera.position.x, camera.position.z, 30);
         // Rare blaze spawns
         if (blazes.getMobs().length < 1 && Math.random() < 0.3) blazes.spawn(1, camera.position.x, camera.position.z, 20);
         // Very rare ghast (only for wallet users, tier bonus)
@@ -2984,6 +3009,55 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               if (bt === 'farmland' && !world.has(bx, dy + 1, bz) && Math.random() < 0.1) {
                 world.addBlock(bx, dy + 1, bz, 'wheat', true);
                 socket.emit('block:place', { x: bx, y: dy + 1, z: bz, type: 'wheat' });
+              }
+            }
+          }
+        }
+      }
+
+      // ---- Sugar cane growth: grows upward every ~45s (up to 3 blocks tall) ----
+      if (Math.floor(elapsed / 45) !== Math.floor((elapsed - dt) / 45)) {
+        const px = Math.floor(camera.position.x);
+        const pz = Math.floor(camera.position.z);
+        for (let dx = -10; dx <= 10; dx++) {
+          for (let dz = -10; dz <= 10; dz++) {
+            for (let dy = 1; dy <= 30; dy++) {
+              const bx = px + dx, bz = pz + dz;
+              if (world.getType(bx, dy, bz) === 'sugar_cane') {
+                // Check if can grow upward (max 3 tall)
+                let height = 1;
+                for (let ch = 1; ch <= 2; ch++) {
+                  if (world.getType(bx, dy - ch, bz) === 'sugar_cane') height++;
+                  else break;
+                }
+                if (height < 3 && !world.has(bx, dy + 1, bz) && Math.random() < 0.3) {
+                  world.addBlock(bx, dy + 1, bz, 'sugar_cane', true);
+                  socket.emit('block:place', { x: bx, y: dy + 1, z: bz, type: 'sugar_cane' });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ---- Cactus growth: grows upward every ~60s (up to 3 blocks tall) ----
+      if (Math.floor(elapsed / 60) !== Math.floor((elapsed - dt) / 60)) {
+        const px = Math.floor(camera.position.x);
+        const pz = Math.floor(camera.position.z);
+        for (let dx = -10; dx <= 10; dx++) {
+          for (let dz = -10; dz <= 10; dz++) {
+            for (let dy = 1; dy <= 30; dy++) {
+              const bx = px + dx, bz = pz + dz;
+              if (world.getType(bx, dy, bz) === 'cactus') {
+                let height = 1;
+                for (let ch = 1; ch <= 2; ch++) {
+                  if (world.getType(bx, dy - ch, bz) === 'cactus') height++;
+                  else break;
+                }
+                if (height < 3 && !world.has(bx, dy + 1, bz) && Math.random() < 0.2) {
+                  world.addBlock(bx, dy + 1, bz, 'cactus', true);
+                  socket.emit('block:place', { x: bx, y: dy + 1, z: bz, type: 'cactus' });
+                }
               }
             }
           }
