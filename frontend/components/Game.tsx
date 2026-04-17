@@ -82,6 +82,7 @@ import LandClaimPanel from './panels/LandClaimPanel';
 import TierPerksPanel from './panels/TierPerksPanel';
 import ControlsPanel from './panels/ControlsPanel';
 import StorePanel, { StoreConfig } from './panels/StorePanel';
+import ArenaPanel, { ArenaState } from './panels/ArenaPanel';
 import SettingsPanel from './panels/SettingsPanel';
 import BountyBoard from './panels/BountyBoard';
 import Minimap from './Minimap';
@@ -219,6 +220,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
   const [holderInfo, setHolderInfo] = useState<{ balance: string; balanceWhole: number; tier: { id: string; label: string; minHolding: number; color: string; perks: string[] } } | null>(null);
   const [burnTotals, setBurnTotals] = useState<{ totalBurned: string; burnCount: number }>({ totalBurned: '0', burnCount: 0 });
   const [burnHistory, setBurnHistory] = useState<Array<{ tx_hash: string; perk_id: string; amount: string; created_at: string }>>([]);
+  // PvP Arena
+  const [arenaOpen, setArenaOpen] = useState(false);
+  const [arenaState, setArenaState] = useState<ArenaState>({ active: false, queueSize: 0 });
+  const [myArenaBet, setMyArenaBet] = useState<{ side: 'a' | 'b'; stakeUsd: number } | null>(null);
+  const [arenaNotified, setArenaNotified] = useState<number | null>(null); // matchId we already notified about
+  const arenaStateRef = useRef<ArenaState>({ active: false, queueSize: 0 });
+  useEffect(() => { arenaStateRef.current = arenaState; }, [arenaState]);
   // Live token price (from DexScreener)
   const [tokenPrice, setTokenPrice] = useState<{
     priceUsd: number;
@@ -1828,6 +1836,70 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
     socket.on('store:holder_info', onHolderInfo);
     socket.on('store:burn_result', onBurnResult);
 
+    // ---- Arena handlers ----
+    const onArenaState = (s: any) => setArenaState(s);
+    const onArenaMatchOpened = (s: any) => {
+      setArenaState(s);
+      setMyArenaBet(null);
+      // Show one-time notification (only for users NOT fighting)
+      if (s?.id && s.id !== arenaNotified && s.playerA !== username && s.playerB !== username) {
+        setArenaNotified(s.id);
+        setToast(`⚔ PvP: ${s.playerA} VS ${s.playerB} — press V to bet!`);
+        setTimeout(() => setToast(null), 6000);
+      }
+    };
+    const onArenaFightBegin = (s: any) => {
+      setArenaState(s);
+      if (s.playerA === username || s.playerB === username) {
+        setToast('⚔ FIGHT! Attack your opponent!');
+        setTimeout(() => setToast(null), 4000);
+      }
+    };
+    const onArenaMatchEnded = (s: any) => {
+      setArenaState(s);
+      const winner = s?.winner ?? 'TIE';
+      setToast(`🏁 Match ended — Winner: ${winner}`);
+      setTimeout(() => setToast(null), 5000);
+    };
+    const onArenaBetConfirmed = (p: any) => {
+      if (p?.ok) {
+        // p is just { ok, txHash } — we need to parse side/stake from the current selected bet
+        setToast('🎲 Bet confirmed on-chain!');
+        setTimeout(() => setToast(null), 3000);
+      } else {
+        setToast(`⚠ Bet failed: ${p?.reason ?? 'unknown'}`);
+        setTimeout(() => setToast(null), 4000);
+      }
+    };
+    const onArenaBetResult = (p: any) => {
+      if (p?.won) {
+        const tokens = Number(p.payoutRaw ?? 0) / 1e18;
+        setToast(`🏆 You won! ${tokens.toFixed(0)} tokens — payout coming`);
+      } else {
+        setToast(`💔 Lost bet on match #${p?.matchId ?? '?'}`);
+      }
+      setTimeout(() => setToast(null), 6000);
+    };
+    const onArenaYouAreFighting = (p: any) => {
+      setArenaState(p.match);
+      setToast(`⚔ You're fighting ${p.side === 'a' ? p.match.playerB : p.match.playerA}! Get ready!`);
+      setTimeout(() => setToast(null), 5000);
+      setArenaOpen(true);
+      // Teleport to arena spawn spot
+      if (playerRef.current) {
+        const spawn = p.side === 'a' ? { x: 40.5, y: 22, z: 8.5 } : { x: 48.5, y: 22, z: 8.5 };
+        playerRef.current.setPosition(spawn.x, spawn.y, spawn.z);
+        playerRef.current.velocity.set(0, 0, 0);
+      }
+    };
+    socket.on('arena:state', onArenaState);
+    socket.on('arena:match_opened', onArenaMatchOpened);
+    socket.on('arena:fight_begin', onArenaFightBegin);
+    socket.on('arena:match_ended', onArenaMatchEnded);
+    socket.on('arena:bet_confirmed', onArenaBetConfirmed);
+    socket.on('arena:bet_result', onArenaBetResult);
+    socket.on('arena:you_are_fighting', onArenaYouAreFighting);
+
     socket.on('leaderboard:data', onLeaderboardData);
     socket.on('achievement:data', onAchievementData);
     socket.on('land:data', onLandData);
@@ -3100,6 +3172,40 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       const camDir = new THREE.Vector3();
       camera.getWorldDirection(camDir);
       const origin = camera.position.clone();
+
+      // PvP arena check: if we're a fighter in an active match, check if we're
+      // looking at the opponent. Emit arena:hit and stop — no mob detection.
+      const arenaSt = arenaStateRef.current;
+      if (arenaSt && arenaSt.active && arenaSt.phase === 'active') {
+        const opponent = arenaSt.playerA === username ? arenaSt.playerB
+                       : arenaSt.playerB === username ? arenaSt.playerA : null;
+        if (opponent) {
+          // Find opponent in OtherPlayersManager
+          const otherList = others.listWithPositions();
+          const target = otherList.find((o) => o.username === opponent);
+          if (target) {
+            // Simple ray-vs-sphere hit test within 4 blocks, ±0.8 radius
+            const dx = target.x - camera.position.x;
+            const dz = target.z - camera.position.z;
+            const forward = new THREE.Vector3(); camera.getWorldDirection(forward);
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < 4.5) {
+              const dir = Math.atan2(dx, dz);
+              const camYaw = Math.atan2(forward.x, forward.z);
+              let da = dir - camYaw;
+              while (da > Math.PI) da -= Math.PI * 2;
+              while (da < -Math.PI) da += Math.PI * 2;
+              if (Math.abs(da) < 0.35) {
+                const dmg = Math.max(1, Math.min(8, damage));
+                getSocket().emit('arena:hit', { target: opponent, dmg });
+                audio.playMobHurt();
+                handSwingTime = 0;
+                return true;
+              }
+            }
+          }
+        }
+      }
 
       // Check all mob managers for hits
       const managersWithNames: Array<[any, string]> = [
@@ -5008,6 +5114,17 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           return next;
         });
       }
+      if (e.key.toLowerCase() === 'v') {
+        // Open arena / bet panel
+        setArenaOpen(v => {
+          const next = !v;
+          if (next) {
+            const s = getSocket();
+            s.emit('arena:state');
+          }
+          return next;
+        });
+      }
       if (e.key.toLowerCase() === 'm') {
         setShowMinimap(v => !v);
       }
@@ -5072,6 +5189,13 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
       socket.off('store:burns', onStoreBurns);
       socket.off('store:holder_info', onHolderInfo);
       socket.off('store:burn_result', onBurnResult);
+      socket.off('arena:state', onArenaState);
+      socket.off('arena:match_opened', onArenaMatchOpened);
+      socket.off('arena:fight_begin', onArenaFightBegin);
+      socket.off('arena:match_ended', onArenaMatchEnded);
+      socket.off('arena:bet_confirmed', onArenaBetConfirmed);
+      socket.off('arena:bet_result', onArenaBetResult);
+      socket.off('arena:you_are_fighting', onArenaYouAreFighting);
       socket.off('achievement:data', onAchievementData);
       socket.off('land:data', onLandData);
       socket.off('land:claimed', onLandClaimed);
@@ -6259,6 +6383,18 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
               return;
             }
 
+            if (cmd === 'arena' || cmd === 'pvp' || cmd === 'fight') {
+              const s = getSocket();
+              s.emit('arena:state');
+              // Auto-queue unless they type /arena watch / /arena leave
+              const sub = parts[1]?.toLowerCase();
+              if (sub === 'leave') s.emit('arena:queue_leave');
+              else if (sub === 'watch' || sub === 'view') { /* just open */ }
+              else s.emit('arena:queue_join');
+              setArenaOpen(true);
+              return;
+            }
+
             if (cmd === 'coins' || cmd === 'basecoins') {
               const c = statsRef.current.baseCoinsCollected ?? 0;
               appendChat({ username: 'system', message: `⬢ Base Coins collected: ${c} | Mine cobblestone/bricks for a chance at hidden coins`, isSystem: true });
@@ -6561,6 +6697,24 @@ export default function Game({ username, walletAddress, verifiedBase, ethBalance
           const s = getSocket();
           s.emit('store:burn_verify', { txHash, perkId });
           setStoreResult(null);
+        }}
+      />
+
+      <ArenaPanel
+        visible={arenaOpen}
+        onClose={() => setArenaOpen(false)}
+        state={arenaState}
+        username={username}
+        walletConnected={!!walletAddress}
+        storeConfig={storeConfig}
+        myBet={myArenaBet}
+        onJoinQueue={() => getSocket().emit('arena:queue_join')}
+        onLeaveQueue={() => getSocket().emit('arena:queue_leave')}
+        onBetTx={(txHash, side, stakeUsd) => {
+          if (!arenaState.id) return;
+          getSocket().emit('arena:bet', { matchId: arenaState.id, txHash, side, stakeUsd });
+          // Optimistically record my own bet so UI shows 'YOU BET HERE' immediately
+          setMyArenaBet({ side, stakeUsd });
         }}
       />
 

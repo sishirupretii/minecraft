@@ -13,6 +13,7 @@ import {
   WORLD_SIZE,
 } from './types';
 import { verifyPurchase, recordPurchase, publicStoreConfig, getItem, verifyBurn, recordBurn, getHolderInfo, getTokenPriceUsd, getTokenMarketData } from './store';
+import { attachArena, registerArenaSocket, unregisterArenaSocket, joinQueue, leaveQueue, placeBet, applyArenaDamage, publicMatchState, ALLOWED_STAKES, getCurrentMatch, ARENA_SPAWN_A, ARENA_SPAWN_B } from './arena';
 
 const players: Map<string, PlayerState> = new Map();
 const lastMoveBroadcast: Map<string, number> = new Map();
@@ -59,6 +60,7 @@ function validWalletUsername(name: string): boolean {
 }
 
 export function registerSocketHandlers(io: Server) {
+  attachArena(io);
   io.on('connection', (socket: Socket) => {
     console.log(`[socket] connect ${socket.id}`);
 
@@ -135,6 +137,10 @@ export function registerSocketHandlers(io: Server) {
         };
         players.set(socket.id, self);
         joined = true;
+        // Register for arena callbacks (notifications, disconnect cleanup)
+        registerArenaSocket(self.username, socket);
+        (socket.data as any).walletAddress = self.walletAddress ?? null;
+        socket.emit('arena:state', publicMatchState());
 
         // Send initial world slice (within load radius)
         const nearby = world.within(sp.x, sp.y, sp.z, INITIAL_LOAD_RADIUS);
@@ -783,9 +789,47 @@ export function registerSocketHandlers(io: Server) {
       }
     });
 
+    // ---- PvP Arena ----
+    socket.on('arena:state', () => {
+      socket.emit('arena:state', publicMatchState());
+    });
+
+    socket.on('arena:queue_join', () => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      const res = joinQueue(self.username, self.walletAddress ?? null);
+      socket.emit('arena:queue_result', { ...res, spawn: { a: ARENA_SPAWN_A, b: ARENA_SPAWN_B } });
+    });
+
+    socket.on('arena:queue_leave', () => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      const ok = leaveQueue(self.username);
+      socket.emit('arena:queue_result', { ok });
+    });
+
+    socket.on('arena:bet', async (p: { matchId: number; txHash: string; side: 'a' | 'b'; stakeUsd: number }) => {
+      const self = players.get(socket.id);
+      if (!self) { socket.emit('arena:bet_result', { ok: false, reason: 'Not connected' }); return; }
+      if (!p?.matchId || !p?.txHash || !p?.side || !p?.stakeUsd) {
+        socket.emit('arena:bet_result', { ok: false, reason: 'Missing bet fields' });
+        return;
+      }
+      const result = await placeBet(p.matchId, self.username, p.txHash, p.side, p.stakeUsd as any);
+      socket.emit('arena:bet_confirmed', { ok: result.ok, reason: result.reason, txHash: p.txHash });
+    });
+
+    socket.on('arena:hit', (p: { target: string; dmg: number }) => {
+      const self = players.get(socket.id);
+      if (!self) return;
+      if (!p?.target || typeof p.dmg !== 'number') return;
+      applyArenaDamage(self.username, p.target, Math.max(0, Math.min(10, p.dmg)));
+    });
+
     socket.on('disconnect', () => {
       const self = players.get(socket.id);
       if (self) {
+        unregisterArenaSocket(self.username);
         players.delete(socket.id);
         lastMoveBroadcast.delete(socket.id);
         io.emit('player:left', { id: socket.id, username: self.username });
